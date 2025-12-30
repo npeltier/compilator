@@ -5,7 +5,7 @@ import fs from 'fs';
 import path from 'path';
 
 import admin from 'firebase-admin';
-import { processUploads } from './processing.js';
+import { processUpprocloads } from './processing.js';
 
 // Initialize Firebase Admin SDK if not already initialized
 if (admin.apps.length === 0) {
