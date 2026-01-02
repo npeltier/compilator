@@ -6,23 +6,24 @@ import admin from 'firebase-admin';
 import { getStorage } from 'firebase-admin/storage';
 import { getFirestore } from 'firebase-admin/firestore';
 
-import { computeMp3Hash } from './hash.js';
+import { computeMp3Hash, getStorePath } from './hash.js';
 import { parseBuffer } from 'music-metadata';
 
+
+function safeName(str) {
+    return str.toLowerCase()
+              .replace(/\s+/g, "_")
+              .replace(/[^a-z0-9_-]/g, "");
+};
 /**
  * Processes the uploaded zip files.
  * @param {Object<string, {filepath: string}>} uploads An object containing uploaded file info.
  * @returns {Promise<any>} A promise that resolves with the compilation data.
  */
-export async function processUploads(uploads) {
+export async function processCompilation(compilationRequest) {
   const db = getFirestore();
-  // For this example, we'll assume a single zip file upload.
-  const upload = Object.values(uploads)[0];
-  if (!upload) {
-    throw new Error('No file uploaded.');
-  }
-
-  const zipBuffer = fs.readFileSync(upload.filepath);
+  
+  const zipBuffer = fs.readFileSync(compilationRequest.filepath);
   const jszip = await JSZip.loadAsync(zipBuffer);
 
   const songPromises = [];
@@ -41,12 +42,17 @@ export async function processUploads(uploads) {
   // Order songs by track number
   validSongs.sort((a, b) => a.track - b.track);
 
-  const compilationId = `compilation_${Date.now()}`;
+  const title = validSongs[0].album || filename.split('/').split('.zip')[0];
+  const author = validSongs[0].author || compilationRequest.author || 'Unknown Author';
+  const authorsRef = db.collection('authors').doc(safeName(author));
+
+  const compilationId = safeName(title);
   const compilationRef = db.collection('compilations').doc(compilationId);
 
   await compilationRef.set({
-    title: 'My Compilation', // Placeholder, could be derived from zip name or a form field
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    title,
+    author: authorsRef,
+    importDate: admin.firestore.FieldValue.serverTimestamp(),
     songs: validSongs.map(song => song.id),
   });
 
@@ -79,9 +85,10 @@ export async function processSong(zipObject) {
 
     console.log(`New song with hash ${hash}. Processing...`);
     const metadata = await parseBuffer(fileBuffer, 'audio/mpeg');
-    const { title, artist, track } = metadata.common;
+    const { duration } = metadata.format;
+    const { album, artist, year, title, track } = metadata.common;
 
-    const storagePath = `songs/${hash}.mp3`;
+    const storagePath = getStorePath(hash);
     await bucket.file(storagePath).save(fileBuffer, {
       metadata: {
         contentType: 'audio/mpeg',
@@ -91,12 +98,14 @@ export async function processSong(zipObject) {
 
     const songRef = songsRef.doc();
     const newSong = {
-      title: title || 'Unknown Title',
-      artist: artist || 'Unknown Artist',
-      track: track ? track.no : 0,
+      album,
+      artist,
+      duration,
       hash,
-      storagePath,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      importDate: admin.firestore.FieldValue.serverTimestamp(),      
+      title,    
+      track,
+      year,   
     };
 
     await songRef.set(newSong);

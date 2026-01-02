@@ -13,7 +13,7 @@ jest.unstable_mockModule("music-metadata", () => ({
 
 // Dynamic imports after mocking
 const musicMetadata = await import("music-metadata");
-const {computeMp3Hash} = await import("../hash.js");
+const {computeMp3Hash, getStorePath} = await import("../hash.js");
 
 describe("computeMp3Hash", () => {
   const mockId3v2Size = 128;
@@ -64,5 +64,16 @@ describe("computeMp3Hash", () => {
 
     await expect(computeMp3Hash(mockFileBuffer))
         .rejects.toThrow("Invalid MP3 file");
+  });
+});
+
+describe('getStorePath', () => {
+  it('should return correct storage path for given hash', () => {
+    const hash = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890';
+    const expectedPath = 'store/ab/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890.mp3';
+
+    const result = getStorePath(hash);
+
+    expect(result).toBe(expectedPath);
   });
 });

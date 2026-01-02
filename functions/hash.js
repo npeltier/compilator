@@ -23,3 +23,7 @@ export async function computeMp3Hash(fileBuffer) {
   hash.update(audioData);
   return hash.digest('hex');
 }
+
+export function getStorePath(hash) {
+  return `store/${hash.slice(0, 2)}/${hash}.mp3`;
+}

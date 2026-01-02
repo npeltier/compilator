@@ -45,37 +45,41 @@ jest.unstable_mockModule('jszip', () => ({
 }));
 jest.unstable_mockModule('../hash.js', () => ({
   computeMp3Hash: jest.fn(),
+  getStorePath: jest.fn((hash) => `store/${hash.slice(0, 2)}/${hash}.mp3`),
 }));
 
 jest.unstable_mockModule('music-metadata', () => ({
     parseBuffer: jest.fn().mockResolvedValue({
+        format: {
+            duration: 180,
+        },
         common: {
             title: 'Unknown Title',
             artist: 'Unknown Artist',
-            track: { no: 0 }
-        }
-    })
+            album: 'Unknown Album',
+            year: 2024,
+            track: {no: 1},
+        },
+    }),
 }));
 
 
 // Dynamic imports after mocking
-const { processUploads, processSong } = await import('../processing.js');
+const { processCompilation, processSong } = await import('../processing.js');
 const { computeMp3Hash } = await import('../hash.js');
 const fs = (await import('fs')).default;
 const JSZip = (await import('jszip')).default;
 const { getFirestore } = await import('firebase-admin/firestore');
 const { getStorage } = await import('firebase-admin/storage');
-const { parseBuffer } = await import('music-metadata');
-
 
 describe('processing.js', () => {
   afterEach(() => {
     jest.clearAllMocks();
   });
 
-  describe('processUploads', () => {
-    it('should throw an error if no file is uploaded', async () => {
-      await expect(processUploads({})).rejects.toThrow('No file uploaded.');
+  describe('processCompilation', () => {
+    it('should throw an error if no filepath is provided', async () => {
+      await expect(processCompilation({})).rejects.toThrow();
     });
 
     it('should process a zip file and create a compilation', async () => {
@@ -98,7 +102,7 @@ describe('processing.js', () => {
       // Reset firestore mock for this test
       firestoreMock.get.mockResolvedValue({ empty: true, docs: [] });
 
-      const result = await processUploads({ file: { filepath: 'path/to/zip' } });
+      const result = await processCompilation({filepath: 'path/to/zip'});
 
       expect(result.songs).toHaveLength(2);
       expect(result.songs[0].title).toBe('Unknown Title'); // Default title
@@ -140,7 +144,7 @@ describe('processing.js', () => {
         expect(result.title).toBe('Unknown Title'); // Default title
         expect(getFirestore().collection).toHaveBeenCalledWith('songs');
         expect(getFirestore().doc).toHaveBeenCalled();
-        expect(getStorage().file).toHaveBeenCalledWith('songs/new_hash.mp3');
+        expect(getStorage().file).toHaveBeenCalledWith('store/ne/new_hash.mp3');
     });
   });
 });
