@@ -3,6 +3,7 @@
   "description": "Cloud Functions for Firebase",
   "type": "module",
   "scripts": {
+    "build": "npm test",
     "lint": "eslint .",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
@@ -11,9 +12,6 @@
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log"
-  },
-  "engines": {
-    "node": "22"
   },
   "main": "index.js",
   "dependencies": {
