@@ -1,0 +1,16 @@
+name: Deploy to Firebase Functions
+on:
+  push:
+    branches:
+      - main
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - run: npm ci --prefix functions
+      - uses: w9jds/firebase-action@master
+        with:
+          args: deploy --only functions --force
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
