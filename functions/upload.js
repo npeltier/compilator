@@ -40,7 +40,7 @@ export const handleUpload = async (req, res) => {
 
   const busboy = Busboy({ headers: req.headers });
   const tmpdir = os.tmpdir();
-  const compilationRequest = {
+  const songRequest = {
       authorId: req.user.uid, // Add authorId from the token
   };
   let filepath;
@@ -51,21 +51,21 @@ export const handleUpload = async (req, res) => {
     filepath = path.join(tmpdir, filename);
     const writeStream = fs.createWriteStream(filepath);
     file.pipe(writeStream);
-    compilationRequest.filepath = filepath;
+    songRequest.filepath = filepath;
   });
 
   busboy.on('field', (fieldname, val) => {
     console.log(`Field [${fieldname}]: value: ${val}`);
     if (fieldname === 'author') {
-      compilationRequest.author = val;
+      songRequest.author = val;
     }
   });
 
   busboy.on('finish', async () => {
     console.log('Finished parsing form.');
     try {
-      const compilation = await processCompilation(compilationRequest);
-      res.status(200).json(compilation);
+      const song = await processSong(songRequest);
+      res.status(200).json(song);
     } catch (error) {
       console.error('Error processing uploads:', error);
       res.status(500).send('Internal Server Error');
