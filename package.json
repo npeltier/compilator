@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Music compilation site for friends, hosted on Firebase.",
   "type": "module",
+  "engines": {
+    "node": "22"
+  },
   "scripts": {
     "build": "cd functions && npm install && npm run build",
     "dev": "npx firebase emulators:start --only auth,functions,firestore,hosting,storage --project=demo-compilator --import=./emulator-data --export-on-exit",
@@ -12,7 +15,7 @@
   },
   "devDependencies": {
     "firebase": "^12.14.0",
-    "firebase-admin": "^12.1.0",
+    "firebase-admin": "^13.10.0",
     "firebase-tools": "^15.19.0"
   },
   "author": "",
