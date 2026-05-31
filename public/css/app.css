@@ -370,16 +370,37 @@ h3 { font-size: 24px; letter-spacing: 0.04em; }
   left: 0; right: 0; bottom: 0;
   background: var(--bg-elev);
   border-top: 1px solid var(--line);
-  padding: 12px 24px;
+  padding: 10px 24px;
   display: grid;
-  grid-template-columns: 240px 1fr 100px;
+  grid-template-columns: 280px 1fr 200px;
   gap: 24px;
   align-items: center;
   z-index: 100;
 }
+/* Reserve space so fixed player never covers content. */
+body.has-player { padding-bottom: 100px; }
+.player-bar .pb-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.player-bar .pb-cover {
+  width: 56px; height: 56px;
+  flex-shrink: 0;
+  border-radius: var(--radius);
+  background: var(--bg-elev-2) center/cover no-repeat;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--display);
+  font-size: 24px;
+  color: var(--ink-faint);
+  transition: transform 120ms ease;
+}
+.player-bar .pb-cover:hover { transform: scale(1.04); }
+.player-bar .pb-cover.placeholder {
+  background: linear-gradient(135deg, var(--bg-elev) 0%, var(--bg-elev-2) 100%);
+}
 .player-bar .now { display: flex; flex-direction: column; min-width: 0; }
 .player-bar .now .t { font-family: var(--display); font-size: 18px; letter-spacing: 0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.player-bar .now .a { color: var(--ink-dim); font-size: 12px; font-style: italic; }
+.player-bar .now .a { color: var(--ink-dim); font-size: 12px; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.player-bar .now .src { color: var(--ink-faint); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 .player-bar .controls { display: flex; align-items: center; gap: 12px; }
 .player-bar button.icon {
   background: transparent;
@@ -393,6 +414,101 @@ h3 { font-size: 24px; letter-spacing: 0.04em; }
   width: 100%; padding: 0; height: 4px;
 }
 .player-bar .time { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-faint); }
+.player-bar .pb-right { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.player-bar .react { font-size: 20px; padding: 4px 6px; transition: transform 80ms ease, filter 120ms ease; filter: grayscale(0.4) opacity(0.6); }
+.player-bar .react:hover { filter: none; transform: scale(1.1); }
+.player-bar .react.active { filter: none; }
+
+/* -------- inline track reactions (compilation page) -------- */
+.tracklist li { grid-template-columns: 32px 1fr auto auto !important; }
+.tracklist .tk-meta { min-width: 0; }
+.tracklist .tk-react { display: flex; gap: 4px; }
+.tracklist .tk-react button {
+  background: transparent;
+  font-size: 16px;
+  padding: 2px 6px;
+  filter: grayscale(0.5) opacity(0.5);
+  transition: filter 120ms ease, transform 80ms ease;
+}
+.tracklist .tk-react button:hover { filter: none; transform: scale(1.15); background: transparent; }
+.tracklist .tk-react button.active { filter: none; }
+
+/* -------- shuffle row (home) -------- */
+.shuffle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.shuffle-btn {
+  background: var(--bg-elev);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  padding: 12px 20px;
+  border-radius: var(--radius);
+  font-family: var(--display);
+  font-size: 15px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, transform 80ms ease;
+}
+.shuffle-btn:hover { border-color: var(--accent); background: var(--bg-elev-2); }
+.shuffle-btn:active { transform: translateY(1px); }
+.shuffle-btn .poop-faded { filter: grayscale(1); opacity: 0.4; }
+
+/* Per-season shuffle button in section headers */
+.season-block header .season-shuffle {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-dim);
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  cursor: pointer;
+  margin-left: auto;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+.season-block header .season-shuffle:hover { color: var(--accent); border-color: var(--accent); background: transparent; }
+
+/* -------- profile likes list -------- */
+.likes-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.likes-list li {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.likes-list .lk-meta .title { font-family: var(--display); font-size: 17px; letter-spacing: 0.03em; }
+.likes-list .lk-meta .artist { font-size: 12px; color: var(--ink-dim); font-style: italic; }
+.likes-list .lk-play, .likes-list .lk-unlike {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  padding: 6px 10px;
+  font-size: 16px;
+}
+.likes-list .lk-play:hover { border-color: var(--accent); color: var(--accent); background: transparent; }
+.likes-list .lk-unlike:hover { background: transparent; }
+
+/* -------- migrate page (formerly inline in migrate.html) -------- */
+.zip-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  margin-bottom: 16px;
+  background: var(--bg-elev);
+}
+.zip-card .head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+.zip-card h4 { margin: 0; font-family: var(--display); font-size: 22px; letter-spacing: 0.03em; }
+.zip-card .filename { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); }
+.zip-meta { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 12px 0; }
 
 /* -------- upload page -------- */
 .dropzone {
@@ -559,16 +675,18 @@ h3 { font-size: 24px; letter-spacing: 0.04em; }
   /* Migration cards */
   .zip-meta { grid-template-columns: 1fr 1fr !important; }
 
-  /* Player bar — single row, icons in middle, scrubber below; drop "Arrêter" */
+  /* Player bar — stack vertically on phones, drop the source label and stop button */
   .player-bar {
     display: grid;
     grid-template-columns: 1fr;
     gap: 6px;
     padding: 8px 12px 10px;
   }
-  .player-bar .now { flex-direction: row; align-items: baseline; gap: 8px; }
-  .player-bar .now .t { font-size: 15px; flex: 1; }
+  .player-bar .pb-cover { width: 40px; height: 40px; font-size: 18px; }
+  .player-bar .pb-left { gap: 8px; }
+  .player-bar .now .t { font-size: 15px; }
   .player-bar .now .a { font-size: 11px; }
+  .player-bar .now .src { display: none; }
   .player-bar .controls {
     display: grid;
     grid-template-columns: auto auto auto 1fr;
@@ -578,4 +696,6 @@ h3 { font-size: 24px; letter-spacing: 0.04em; }
   .player-bar .scrub { width: 100%; }
   .player-bar .time { display: none; }
   .player-bar #pb-stop { display: none; }
+  .player-bar .pb-right { justify-content: flex-start; }
+  body.has-player { padding-bottom: 160px; }
 }

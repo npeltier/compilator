@@ -1,0 +1,181 @@
+// Home view: next-slot banner, author chips, cover grid grouped by year+season,
+// plus the cross-compilation shuffle buttons (Tout / Sauf 💩 / Mes ❤️).
+
+import { auth, db, storage } from '../firebase-init.js';
+import { nextCompilationSlot, slotLabel, deadlineLabel } from '../slot.js';
+import { allCompilations } from '../catalog.js';
+import { dislikeCount, likeCount } from '../reactions.js';
+import {
+  queueAllSongs,
+  queueAllExceptDisliked,
+  queueLikedSongs,
+  queueSeasonYear,
+} from '../shuffle.js';
+import { playQueue } from '../player.js';
+import {
+  ref as storageRef,
+  getDownloadURL,
+} from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js';
+
+function escape(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+export async function mount(el, { query }) {
+  const filterAuthor = query.author || null;
+  el.innerHTML = `
+    <div class="shell">
+      <div id="nextBanner"></div>
+      <div class="shuffle-row" id="shuffleRow"></div>
+      <div class="chip-row" id="authorChips"></div>
+      <div id="empty" class="notice" hidden>Aucune compilation pour l'instant. <a href="/upload">Crée la première</a>.</div>
+      <div id="years"></div>
+    </div>
+  `;
+
+  const user = auth.currentUser;
+  const comps = allCompilations()
+    .slice()
+    .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+
+  // ---- Next-slot banner ----
+  const slot = nextCompilationSlot();
+  const mine = comps.find((c) => c.authorUid === user.uid && c.season === slot.season && c.year === slot.year);
+  const banner = el.querySelector('#nextBanner');
+  const slotTxt = slotLabel(slot);
+  const deadTxt = deadlineLabel(slot);
+  if (!mine) {
+    banner.innerHTML = `
+      <section class="next-banner todo">
+        <div class="text">
+          <p class="eyebrow">Prochaine compil</p>
+          <div class="head">${slotTxt}</div>
+          <div class="sub">À rendre avant le ${deadTxt} — tu n'as encore rien envoyé.</div>
+        </div>
+        <a class="cta" href="/upload">Commencer</a>
+      </section>
+    `;
+  } else if (mine.status !== 'published') {
+    banner.innerHTML = `
+      <section class="next-banner wip">
+        <div class="text">
+          <p class="eyebrow">Prochaine compil — en cours</p>
+          <div class="head">${escape(mine.title || slotTxt)}</div>
+          <div class="sub">${mine.trackCount || 0} morceau${(mine.trackCount || 0) > 1 ? 'x' : ''} déjà déposés · à rendre avant le ${deadTxt}.</div>
+        </div>
+        <a class="cta" href="/c/${mine.id}">Reprendre</a>
+      </section>
+    `;
+  } else {
+    banner.innerHTML = `
+      <section class="next-banner done">
+        <div class="text">
+          <p class="eyebrow">Prochaine compil</p>
+          <div class="head">${escape(mine.title)} · ${slotTxt}</div>
+          <div class="sub">Publiée. Bravo.</div>
+        </div>
+        <a class="cta" href="/c/${mine.id}">Écouter</a>
+      </section>
+    `;
+  }
+
+  // ---- Shuffle row ----
+  const shuffleRow = el.querySelector('#shuffleRow');
+  const buttons = [
+    { id: 'sh-all', label: '🔀 Tout en aléatoire', show: comps.length > 0, fn: () => playQueue(queueAllSongs(), { sourceLabel: 'Tout en aléatoire' }) },
+    { id: 'sh-clean', label: '<span class="poop-faded">💩</span> Sauf les 💩', show: dislikeCount() > 0, fn: () => playQueue(queueAllExceptDisliked(), { sourceLabel: 'Sauf les 💩' }) },
+    { id: 'sh-liked', label: '❤️ Mes coups de cœur', show: likeCount() > 0, fn: () => playQueue(queueLikedSongs(), { sourceLabel: 'Mes coups de cœur' }) },
+  ];
+  for (const b of buttons) {
+    if (!b.show) continue;
+    const btn = document.createElement('button');
+    btn.id = b.id;
+    btn.className = 'shuffle-btn';
+    btn.innerHTML = b.label;
+    btn.addEventListener('click', b.fn);
+    shuffleRow.appendChild(btn);
+  }
+
+  // ---- Author chips ----
+  const authors = Array.from(new Set(comps.map((c) => c.authorName).filter(Boolean))).sort();
+  const chipsEl = el.querySelector('#authorChips');
+  const mkChip = (label, active, href) => {
+    const a = document.createElement('a');
+    a.className = 'chip' + (active ? ' active' : '');
+    a.textContent = label;
+    a.href = href;
+    return a;
+  };
+  chipsEl.appendChild(mkChip('Tout', !filterAuthor, '/'));
+  authors.forEach((a) => chipsEl.appendChild(mkChip(a, a === filterAuthor, `/author/${encodeURIComponent(a)}`)));
+
+  const shown = filterAuthor ? comps.filter((c) => c.authorName === filterAuthor) : comps;
+  el.querySelector('#empty').hidden = shown.length > 0;
+
+  // ---- Group by year, then season within year ----
+  const byYear = new Map();
+  for (const c of shown) {
+    const y = c.year || new Date(c.createdAt?.toMillis?.() || Date.now()).getFullYear();
+    if (!byYear.has(y)) byYear.set(y, []);
+    byYear.get(y).push(c);
+  }
+  const yearsSorted = [...byYear.keys()].sort((a, b) => b - a);
+  const yearsEl = el.querySelector('#years');
+  const seasonLabel = { ete: 'Été', noel: 'Noël' };
+
+  for (const y of yearsSorted) {
+    const groups = byYear.get(y);
+    const winter = groups.filter((c) => c.season === 'noel');
+    const summer = groups.filter((c) => c.season === 'ete');
+    const other = groups.filter((c) => c.season !== 'ete' && c.season !== 'noel');
+    for (const [seasonKey, list] of [['noel', winter], ['ete', summer], ['other', other]]) {
+      if (list.length === 0) continue;
+      const block = document.createElement('section');
+      block.className = `season-block ${seasonKey === 'noel' ? 'winter' : seasonKey === 'ete' ? 'summer' : ''}`;
+      const labelTxt = `${seasonLabel[seasonKey] || ''} ${y}`;
+      block.innerHTML = `
+        <header>
+          <h2>${labelTxt}</h2>
+          <span class="count">${list.length} compilation${list.length > 1 ? 's' : ''}</span>
+          ${seasonKey === 'ete' || seasonKey === 'noel'
+            ? `<button class="season-shuffle" title="Aléatoire ${labelTxt}" data-season="${seasonKey}" data-year="${y}">🔀</button>`
+            : ''}
+        </header>
+        <div class="cover-grid"></div>
+      `;
+      const sb = block.querySelector('.season-shuffle');
+      if (sb) {
+        sb.addEventListener('click', async () => {
+          sb.disabled = true;
+          try {
+            const queue = await queueSeasonYear(seasonKey, y);
+            playQueue(queue, { sourceLabel: `${labelTxt} en aléatoire` });
+          } finally {
+            sb.disabled = false;
+          }
+        });
+      }
+      const grid = block.querySelector('.cover-grid');
+      for (const c of list) {
+        const card = document.createElement('a');
+        card.className = 'cover-card';
+        card.href = `/c/${c.id}`;
+        const firstChar = (c.title || '?')[0].toUpperCase();
+        card.innerHTML = `
+          <div class="art ${c.coverPath ? '' : 'placeholder'}">${c.coverPath ? '' : firstChar}</div>
+          <div class="title">${escape(c.title)}</div>
+          <div class="author">${escape(c.authorName || '')}</div>
+        `;
+        grid.appendChild(card);
+        if (c.coverPath) {
+          getDownloadURL(storageRef(storage, c.coverPath))
+            .then((url) => { card.querySelector('.art').style.backgroundImage = `url(${url})`; })
+            .catch(() => {});
+        }
+      }
+      yearsEl.appendChild(block);
+    }
+  }
+}

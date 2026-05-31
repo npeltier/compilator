@@ -10,148 +10,16 @@
   <nav class="topbar">
     <a class="brand" href="/">Compilator</a>
     <div class="nav-links">
-      <a href="/upload.html">Prochaine compil</a>
-      <a href="/migrate.html" data-admin-only>Import</a>
-      <a href="/profile.html">Profil</a>
+      <a href="/upload">Prochaine compil</a>
+      <a href="/migrate" data-admin-only>Import</a>
+      <a href="/profile">Profil</a>
       <a href="#" id="logout">Déconnexion</a>
       <span class="who" id="who"></span>
     </div>
   </nav>
 
-  <main class="shell">
-    <div id="nextBanner"></div>
-    <div class="chip-row" id="authorChips"></div>
-    <div id="empty" class="notice" hidden>Aucune compilation pour l'instant. <a href="/upload.html">Crée la première</a>.</div>
-    <div id="years"></div>
-  </main>
+  <main id="view"></main>
 
-  <script type="module">
-    import { db, storage, auth } from '/js/firebase-init.js';
-    import { requireAuth, logout } from '/js/auth-guard.js';
-    import { nextCompilationSlot, slotLabel, deadlineLabel } from '/js/slot.js';
-    import { collection, getDocs, orderBy, query } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
-    import { ref as storageRef, getDownloadURL } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js';
-
-    document.getElementById('logout').addEventListener('click', (e) => { e.preventDefault(); logout(); });
-
-    const user = await requireAuth();
-    document.getElementById('who').textContent = user.email;
-
-    const params = new URLSearchParams(location.search);
-    const filterAuthor = params.get('author');
-
-    const snap = await getDocs(query(collection(db, 'compilations'), orderBy('createdAt', 'desc')));
-    const comps = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-    // ---- Next-slot banner ----
-    const slot = nextCompilationSlot();
-    const mine = comps.find(c => c.authorUid === user.uid && c.season === slot.season && c.year === slot.year);
-    const banner = document.getElementById('nextBanner');
-    const slotTxt = slotLabel(slot);
-    const deadTxt = deadlineLabel(slot);
-    if (!mine) {
-      banner.innerHTML = `
-        <section class="next-banner todo">
-          <div class="text">
-            <p class="eyebrow">Prochaine compil</p>
-            <div class="head">${slotTxt}</div>
-            <div class="sub">À rendre avant le ${deadTxt} — tu n'as encore rien envoyé.</div>
-          </div>
-          <a class="cta" href="/upload.html">Commencer</a>
-        </section>
-      `;
-    } else if (mine.status !== 'published') {
-      banner.innerHTML = `
-        <section class="next-banner wip">
-          <div class="text">
-            <p class="eyebrow">Prochaine compil — en cours</p>
-            <div class="head">${escape(mine.title || slotTxt)}</div>
-            <div class="sub">${mine.trackCount || 0} morceau${(mine.trackCount || 0) > 1 ? 'x' : ''} déjà déposés · à rendre avant le ${deadTxt}.</div>
-          </div>
-          <a class="cta" href="/compilation.html?id=${mine.id}">Reprendre</a>
-        </section>
-      `;
-    } else {
-      banner.innerHTML = `
-        <section class="next-banner done">
-          <div class="text">
-            <p class="eyebrow">Prochaine compil</p>
-            <div class="head">${escape(mine.title)} · ${slotTxt}</div>
-            <div class="sub">Publiée. Bravo.</div>
-          </div>
-          <a class="cta" href="/compilation.html?id=${mine.id}">Écouter</a>
-        </section>
-      `;
-    }
-
-    // Author chips
-    const authors = Array.from(new Set(comps.map(c => c.authorName).filter(Boolean))).sort();
-    const chipsEl = document.getElementById('authorChips');
-    const mkChip = (label, active, href) => {
-      const a = document.createElement('a');
-      a.className = 'chip' + (active ? ' active' : '');
-      a.textContent = label;
-      a.href = href;
-      return a;
-    };
-    chipsEl.appendChild(mkChip('Tout', !filterAuthor, '/'));
-    authors.forEach(a => chipsEl.appendChild(mkChip(a, a === filterAuthor, `/?author=${encodeURIComponent(a)}`)));
-
-    const shown = filterAuthor ? comps.filter(c => c.authorName === filterAuthor) : comps;
-    document.getElementById('empty').hidden = shown.length > 0;
-
-    // Group by year, then by season within year.
-    const byYear = new Map();
-    for (const c of shown) {
-      const y = c.year || new Date(c.createdAt?.toMillis?.() || Date.now()).getFullYear();
-      if (!byYear.has(y)) byYear.set(y, []);
-      byYear.get(y).push(c);
-    }
-    const yearsSorted = [...byYear.keys()].sort((a, b) => b - a);
-
-    const yearsEl = document.getElementById('years');
-    const seasonLabel = { ete: 'Été', noel: 'Noël' };
-
-    for (const y of yearsSorted) {
-      const groups = byYear.get(y);
-      const winterFirst = groups.filter(c => c.season === 'noel');
-      const summer = groups.filter(c => c.season === 'ete');
-      const other = groups.filter(c => c.season !== 'ete' && c.season !== 'noel');
-      for (const [seasonKey, list] of [['noel', winterFirst], ['ete', summer], ['other', other]]) {
-        if (list.length === 0) continue;
-        const block = document.createElement('section');
-        block.className = `season-block ${seasonKey === 'noel' ? 'winter' : seasonKey === 'ete' ? 'summer' : ''}`;
-        block.innerHTML = `
-          <header>
-            <h2>${seasonLabel[seasonKey] || ''} ${y}</h2>
-            <span class="count">${list.length} compilation${list.length > 1 ? 's' : ''}</span>
-          </header>
-          <div class="cover-grid"></div>
-        `;
-        const grid = block.querySelector('.cover-grid');
-        for (const c of list) {
-          const card = document.createElement('a');
-          card.className = 'cover-card';
-          card.href = `/compilation.html?id=${c.id}`;
-          card.innerHTML = `
-            <div class="art ${c.coverPath ? '' : 'placeholder'}" ${c.coverPath ? '' : `data-letter="${(c.title || '?')[0].toUpperCase()}"`}>${c.coverPath ? '' : (c.title || '?')[0].toUpperCase()}</div>
-            <div class="title">${escape(c.title)}</div>
-            <div class="author">${escape(c.authorName || '')}</div>
-          `;
-          grid.appendChild(card);
-          if (c.coverPath) {
-            getDownloadURL(storageRef(storage, c.coverPath))
-              .then(url => { card.querySelector('.art').style.backgroundImage = `url(${url})`; })
-              .catch(() => {});
-          }
-        }
-        yearsEl.appendChild(block);
-      }
-    }
-
-    function escape(s) {
-      return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-    }
-  </script>
+  <script type="module" src="/js/app.js"></script>
 </body>
 </html>

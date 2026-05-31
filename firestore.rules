@@ -28,6 +28,12 @@ service cloud.firestore {
                     && request.resource.data.diff(resource.data).affectedKeys()
                        .hasOnly(['displayName', 'updatedAt']);
       allow delete: if false;
+
+      // Per-user reactions (❤️ like / 💩 dislike) on songs. Only the owning user
+      // can read or write their own reactions.
+      match /reactions/{songId} {
+        allow read, write: if isSignedIn() && request.auth.uid == uid;
+      }
     }
 
     // Global song catalog (dedup by hash). Only Functions writes; allowlisted users read.
@@ -51,6 +57,13 @@ service cloud.firestore {
         allow write: if isAllowlisted()
                      && get(/databases/$(database)/documents/compilations/$(compId)).data.authorUid == request.auth.uid;
       }
+    }
+
+    // Collection-group read for `tracks` so the client can build the catalog
+    // (songId → first-compilation placement) with one query instead of N+1.
+    // Per-compilation track writes are still gated by the rule above.
+    match /{path=**}/tracks/{trackId} {
+      allow read: if isAllowlisted();
     }
 
     match /{document=**} {
