@@ -4,7 +4,7 @@
 import { auth, db, storage } from '../firebase-init.js';
 import { nextCompilationSlot, slotLabel, deadlineLabel } from '../slot.js';
 import { allCompilations } from '../catalog.js';
-import { dislikeCount, likeCount } from '../reactions.js';
+import { likeCount } from '../reactions.js';
 import {
   queueAllSongs,
   queueAllExceptDisliked,
@@ -85,7 +85,7 @@ export async function mount(el, { query }) {
   const shuffleRow = el.querySelector('#shuffleRow');
   const buttons = [
     { id: 'sh-all', label: '🔀 Tout en aléatoire', show: comps.length > 0, fn: () => playQueue(queueAllSongs(), { sourceLabel: 'Tout en aléatoire' }) },
-    { id: 'sh-clean', label: '<span class="poop-faded">💩</span> Sauf les 💩', show: dislikeCount() > 0, fn: () => playQueue(queueAllExceptDisliked(), { sourceLabel: 'Sauf les 💩' }) },
+    { id: 'sh-clean', label: '<span class="poop-faded">💩</span> Tout sauf les 💩', show: comps.length > 0, fn: () => playQueue(queueAllExceptDisliked(), { sourceLabel: 'Tout sauf les 💩' }) },
     { id: 'sh-liked', label: '❤️ Mes coups de cœur', show: likeCount() > 0, fn: () => playQueue(queueLikedSongs(), { sourceLabel: 'Mes coups de cœur' }) },
   ];
   for (const b of buttons) {
