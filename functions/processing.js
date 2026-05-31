@@ -4,27 +4,66 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { parseBuffer } from 'music-metadata';
 
 import { computeMp3Hash, getStorePath } from './hash.js';
+import { isAdminEmail } from './auth.js';
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
 }
 
 /**
- * Process a song already uploaded to a staging path in Cloud Storage.
- * - Downloads the staging blob.
- * - Computes the audio hash; dedupes against /songs.
- * - If new, copies the blob to /store/{hh}/{hash}.mp3 and writes /songs/{id}.
- * - Always creates /compilations/{compilationId}/tracks/{trackId}.
- * - If the compilation has no cover yet and the song has an embedded APIC,
- *   writes the cover to /covers/{compilationId}.{ext} (coverSource: "id3").
- * - Deletes the staging blob on success.
+ * Hash + parse a buffer, dedupe against `/songs`, and either reuse the
+ * matching song doc or create a new one (uploading the buffer to /store/).
+ * Shared by processSongFromStaging and replaceTrackSongFromStaging.
  *
- * @param {Object} args
- * @param {string} args.tempPath - e.g. "uploads/<uid>/<uuid>.mp3"
- * @param {string} args.compilationId
- * @param {number} args.order
- * @param {string} args.uploaderUid
- * @returns {Promise<{songId:string, trackId:string, dedupHit:boolean, title:string, artist:string, duration:number, coverWritten:boolean}>}
+ * @returns {Promise<{songId:string, songData:object, dedupHit:boolean, metadata:object}>}
+ */
+async function resolveSongFromBuffer(buf, uploaderUid) {
+  const db = getFirestore();
+  const bucket = getStorage().bucket();
+
+  const hash = await computeMp3Hash(buf);
+  const metadata = await parseBuffer(buf, 'audio/mpeg');
+  const { duration } = metadata.format || {};
+  const { album, artist, year, title, track } = metadata.common || {};
+  const trackNo = track && typeof track.no === 'number' ? track.no : null;
+
+  const songsRef = db.collection('songs');
+  const existing = await songsRef.where('hash', '==', hash).limit(1).get();
+
+  if (!existing.empty) {
+    const d = existing.docs[0];
+    return { songId: d.id, songData: d.data(), dedupHit: true, metadata };
+  }
+
+  const storagePath = getStorePath(hash);
+  await bucket.file(storagePath).save(buf, {
+    metadata: { contentType: 'audio/mpeg' },
+    resumable: false,
+  });
+
+  const songRef = songsRef.doc();
+  const songData = {
+    hash,
+    storagePath,
+    title: title || null,
+    artist: artist || null,
+    album: album || null,
+    year: year || null,
+    track: trackNo,
+    duration: duration || null,
+    uploaderUid,
+    importDate: FieldValue.serverTimestamp(),
+  };
+  await songRef.set(songData);
+  return { songId: songRef.id, songData, dedupHit: false, metadata };
+}
+
+/**
+ * Process a song already uploaded to a staging path in Cloud Storage.
+ * - Hashes + dedups against /songs.
+ * - Creates /compilations/{compilationId}/tracks/{trackId}.
+ * - Fills in the compilation cover from ID3 APIC if it doesn't have one yet.
+ * - Deletes the staging blob on success.
  */
 export async function processSongFromStaging({ tempPath, compilationId, order, uploaderUid }) {
   if (!tempPath || !compilationId || order == null || !uploaderUid) {
@@ -37,47 +76,8 @@ export async function processSongFromStaging({ tempPath, compilationId, order, u
   const stagingFile = bucket.file(tempPath);
   const [stagingBuf] = await stagingFile.download();
 
-  const hash = await computeMp3Hash(stagingBuf);
-  const metadata = await parseBuffer(stagingBuf, 'audio/mpeg');
-  const { duration } = metadata.format || {};
-  const { album, artist, year, title, track, picture } = metadata.common || {};
-  const trackNo = track && typeof track.no === 'number' ? track.no : null;
-
-  const songsRef = db.collection('songs');
-  const existing = await songsRef.where('hash', '==', hash).limit(1).get();
-
-  let songId;
-  let songData;
-  let dedupHit = false;
-
-  if (!existing.empty) {
-    dedupHit = true;
-    const d = existing.docs[0];
-    songId = d.id;
-    songData = d.data();
-  } else {
-    const storagePath = getStorePath(hash);
-    await bucket.file(storagePath).save(stagingBuf, {
-      metadata: { contentType: 'audio/mpeg' },
-      resumable: false,
-    });
-
-    const songRef = songsRef.doc();
-    songId = songRef.id;
-    songData = {
-      hash,
-      storagePath,
-      title: title || null,
-      artist: artist || null,
-      album: album || null,
-      year: year || null,
-      track: trackNo,
-      duration: duration || null,
-      uploaderUid,
-      importDate: FieldValue.serverTimestamp(),
-    };
-    await songRef.set(songData);
-  }
+  const { songId, songData, dedupHit, metadata } = await resolveSongFromBuffer(stagingBuf, uploaderUid);
+  const { picture } = metadata.common || {};
 
   // Append to compilation's tracks subcollection.
   const compRef = db.collection('compilations').doc(compilationId);
@@ -159,4 +159,67 @@ export async function uploadCoverFromStaging({ tempPath, compilationId, ext, upl
   }, { merge: true });
   try { await stagingFile.delete(); } catch (e) { /* ignore */ }
   return { coverPath };
+}
+
+/**
+ * Replace the audio binary of an existing track. The track row keeps its order
+ * and any user-edited title/artist overrides; only the songId pointer and
+ * duration update. Compilation's totalDuration is adjusted by the delta.
+ *
+ * Authorization: the caller must be the compilation's author OR an admin.
+ *
+ * @param {Object} args
+ * @param {string} args.tempPath
+ * @param {string} args.compilationId
+ * @param {string} args.trackId
+ * @param {string} args.uploaderUid
+ * @param {string} args.callerEmail - lowercased, used for the admin check
+ * @returns {Promise<{songId:string, dedupHit:boolean, duration:number|null}>}
+ */
+export async function replaceTrackSongFromStaging({ tempPath, compilationId, trackId, uploaderUid, callerEmail }) {
+  if (!tempPath || !compilationId || !trackId || !uploaderUid) {
+    throw new Error('replaceTrackSongFromStaging: missing tempPath/compilationId/trackId/uploaderUid');
+  }
+
+  const bucket = getStorage().bucket();
+  const db = getFirestore();
+
+  const compRef = db.collection('compilations').doc(compilationId);
+  const compSnap = await compRef.get();
+  if (!compSnap.exists) {
+    throw new Error('Compilation not found.');
+  }
+  const comp = compSnap.data();
+  if (comp.authorUid !== uploaderUid && !(await isAdminEmail(callerEmail))) {
+    throw new Error('Only the compilation author or an admin may replace a track.');
+  }
+
+  const trackRef = compRef.collection('tracks').doc(trackId);
+  const trackSnap = await trackRef.get();
+  if (!trackSnap.exists) {
+    throw new Error('Track not found.');
+  }
+  const trackData = trackSnap.data();
+  const oldDuration = trackData.duration || 0;
+
+  const stagingFile = bucket.file(tempPath);
+  const [stagingBuf] = await stagingFile.download();
+  const { songId, songData, dedupHit } = await resolveSongFromBuffer(stagingBuf, uploaderUid);
+  const newDuration = songData.duration || 0;
+
+  // Preserve title/artist overrides (user wins). Update songId + duration only.
+  await trackRef.set({
+    songId,
+    duration: newDuration,
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  await compRef.set({
+    totalDuration: FieldValue.increment(newDuration - oldDuration),
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  try { await stagingFile.delete(); } catch (e) { /* ignore */ }
+
+  return { songId, dedupHit, duration: newDuration };
 }

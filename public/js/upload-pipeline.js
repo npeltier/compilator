@@ -16,6 +16,7 @@ import {
 
 const processSongFn = httpsCallable(functions, 'processSong');
 const uploadCoverFn = httpsCallable(functions, 'uploadCover');
+const replaceTrackSongFn = httpsCallable(functions, 'replaceTrackSong');
 
 function uuid() {
   return crypto.randomUUID ? crypto.randomUUID()
@@ -71,6 +72,36 @@ export async function uploadCover({ file, compilationId, onProgress }) {
     );
   });
   const { data } = await uploadCoverFn({ tempPath, compilationId, ext });
+  return data;
+}
+
+/**
+ * Replace an existing track's audio binary. Uploads the new file to staging,
+ * then calls the replaceTrackSong callable which re-hashes / dedupes and
+ * updates the track row's songId + duration. Title/artist overrides on the
+ * track are preserved.
+ *
+ * @returns {Promise<{songId,dedupHit,duration}>}
+ */
+export async function replaceSongBinary({ file, compilationId, trackId, onProgress, filename }) {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Non connecté.');
+  const id = uuid();
+  const safeName = (filename || file.name || 'track.mp3').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const tempPath = `uploads/${user.uid}/${id}-${safeName}`;
+
+  const task = uploadBytesResumable(storageRef(storage, tempPath), file, {
+    contentType: 'audio/mpeg',
+  });
+  await new Promise((resolve, reject) => {
+    task.on('state_changed',
+      (snap) => onProgress?.(snap.bytesTransferred / Math.max(1, snap.totalBytes)),
+      reject,
+      resolve,
+    );
+  });
+
+  const { data } = await replaceTrackSongFn({ tempPath, compilationId, trackId });
   return data;
 }
 

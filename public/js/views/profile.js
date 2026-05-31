@@ -2,6 +2,11 @@
 
 import { auth, db } from '../firebase-init.js';
 import {
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  updatePassword,
+} from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js';
+import {
   doc,
   getDoc,
   setDoc,
@@ -49,6 +54,27 @@ export async function mount(el) {
         <h3>Mes coups de cœur <span id="likesCount" class="eyebrow" style="float:right"></span></h3>
         <ul id="likes" class="likes-list"></ul>
         <div id="likesEmpty" class="notice" hidden>Aucun ❤️ pour l'instant. Mets ton premier ❤️ depuis n'importe quelle compilation.</div>
+      </section>
+
+      <section class="section" style="margin-top:64px;">
+        <h3>Mot de passe</h3>
+        <p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 16px;">
+          Change le mot de passe qu'on t'a envoyé par mail.
+        </p>
+        <div id="pwdError" class="error" hidden></div>
+        <div id="pwdOk" class="notice" hidden>Mot de passe mis à jour.</div>
+        <form id="pwdForm">
+          <label for="pwdCurrent">Mot de passe actuel</label>
+          <input id="pwdCurrent" type="password" autocomplete="current-password" required>
+
+          <label for="pwdNew" style="margin-top:16px;">Nouveau mot de passe</label>
+          <input id="pwdNew" type="password" autocomplete="new-password" minlength="6" required>
+
+          <label for="pwdConfirm" style="margin-top:16px;">Confirmer</label>
+          <input id="pwdConfirm" type="password" autocomplete="new-password" minlength="6" required>
+
+          <button type="submit" class="btn-accent" style="margin-top:24px;">Mettre à jour</button>
+        </form>
       </section>
     </div>
   `;
@@ -108,5 +134,48 @@ export async function mount(el) {
   }
   renderLikes();
   const unsub = onReactionChange(renderLikes);
+
+  // ---- Password change ----
+  el.querySelector('#pwdForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = el.querySelector('#pwdError');
+    const okEl = el.querySelector('#pwdOk');
+    errEl.hidden = true; okEl.hidden = true;
+    const curEl = el.querySelector('#pwdCurrent');
+    const newEl = el.querySelector('#pwdNew');
+    const confEl = el.querySelector('#pwdConfirm');
+    const current = curEl.value;
+    const next = newEl.value;
+    const confirm = confEl.value;
+    if (next.length < 6) {
+      errEl.textContent = 'Mot de passe trop court (6 caractères minimum).';
+      errEl.hidden = false;
+      return;
+    }
+    if (next !== confirm) {
+      errEl.textContent = 'Les deux nouveaux mots de passe ne correspondent pas.';
+      errEl.hidden = false;
+      return;
+    }
+    try {
+      await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, current));
+      await updatePassword(user, next);
+      curEl.value = ''; newEl.value = ''; confEl.value = '';
+      okEl.hidden = false;
+    } catch (err) {
+      const code = err.code || '';
+      if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+        errEl.textContent = 'Mot de passe actuel incorrect.';
+      } else if (code === 'auth/weak-password') {
+        errEl.textContent = 'Mot de passe trop court (6 caractères minimum).';
+      } else if (code === 'auth/requires-recent-login') {
+        errEl.textContent = 'Connecte-toi à nouveau puis réessaie.';
+      } else {
+        errEl.textContent = err.message || String(err);
+      }
+      errEl.hidden = false;
+    }
+  });
+
   return () => unsub();
 }

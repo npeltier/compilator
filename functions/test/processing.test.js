@@ -1,15 +1,22 @@
 import { jest } from '@jest/globals';
 
+// Mock firebase-admin: `admin.firestore` is both callable (returns a client with
+// .doc(...)) and a namespace (has FieldValue static). The callable form is used
+// by auth.js to look up /admins/{email}; the namespace form is unused by
+// processing.js (it imports FieldValue from firebase-admin/firestore instead).
+const adminAdminsGet = jest.fn(async () => ({ exists: false }));
+const adminFirestoreFn = jest.fn(() => ({
+  doc: jest.fn(() => ({ get: adminAdminsGet })),
+}));
+adminFirestoreFn.FieldValue = {
+  serverTimestamp: jest.fn(() => 'TS'),
+  increment: jest.fn((n) => ({ __increment: n })),
+};
 jest.unstable_mockModule('firebase-admin', () => ({
   default: {
     apps: [{}],
     initializeApp: jest.fn(),
-    firestore: {
-      FieldValue: {
-        serverTimestamp: jest.fn(() => 'TS'),
-        increment: jest.fn((n) => ({ __increment: n })),
-      },
-    },
+    firestore: adminFirestoreFn,
   },
 }));
 
@@ -80,7 +87,7 @@ jest.unstable_mockModule('music-metadata', () => ({
   })),
 }));
 
-const { processSongFromStaging } = await import('../processing.js');
+const { processSongFromStaging, replaceTrackSongFromStaging } = await import('../processing.js');
 
 describe('processSongFromStaging', () => {
   beforeEach(() => {
@@ -124,5 +131,97 @@ describe('processSongFromStaging', () => {
 
   test('throws on missing args', async () => {
     await expect(processSongFromStaging({})).rejects.toThrow();
+  });
+});
+
+describe('replaceTrackSongFromStaging', () => {
+  let trackSetMock;
+  let trackRef;
+  let tracksColl;
+  const oldTrack = { songId: 'old_song', duration: 120, title: 'User Title', artist: 'User Artist', order: 0 };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    songsCollection.doc.mockReturnValue({ id: 'new_song_id', set: jest.fn(() => Promise.resolve()) });
+    trackSetMock = jest.fn(() => Promise.resolve());
+    trackRef = {
+      get: jest.fn(async () => ({ exists: true, data: () => oldTrack })),
+      set: trackSetMock,
+    };
+    tracksColl = { doc: jest.fn(() => trackRef) };
+    compRef.collection.mockReturnValue(tracksColl);
+    compRef.get.mockResolvedValue({ exists: true, data: () => ({ authorUid: 'u1', coverPath: 'covers/c.jpg' }) });
+    adminAdminsGet.mockResolvedValue({ exists: false });
+  });
+
+  test('author replaces track: updates songId + duration, preserves overrides, adjusts totalDuration delta', async () => {
+    songsCollection.get.mockResolvedValueOnce({ empty: true, docs: [] });
+    const result = await replaceTrackSongFromStaging({
+      tempPath: 'uploads/u1/abc.mp3',
+      compilationId: 'comp1',
+      trackId: 'track_id',
+      uploaderUid: 'u1',
+      callerEmail: 'u1@example.com',
+    });
+    expect(result.dedupHit).toBe(false);
+    expect(result.songId).toBe('new_song_id');
+    expect(result.duration).toBe(180);
+    // Track update: songId + duration only — no title/artist field touched.
+    const trackUpdate = trackSetMock.mock.calls[0][0];
+    expect(trackUpdate.songId).toBe('new_song_id');
+    expect(trackUpdate.duration).toBe(180);
+    expect(trackUpdate.title).toBeUndefined();
+    expect(trackUpdate.artist).toBeUndefined();
+    // Compilation totalDuration delta = new - old = 180 - 120 = 60.
+    const compUpdate = compRef.set.mock.calls.find((c) => c[0].totalDuration)?.[0];
+    expect(compUpdate.totalDuration.__increment).toBe(60);
+    expect(stagingFileMock.delete).toHaveBeenCalled();
+  });
+
+  test('dedup hit: reuses existing song, no /store write', async () => {
+    songsCollection.get.mockResolvedValueOnce({
+      empty: false,
+      docs: [{ id: 'existing_id', data: () => ({ hash: 'h', title: 'T', artist: 'A', duration: 200 }) }],
+    });
+    const result = await replaceTrackSongFromStaging({
+      tempPath: 'uploads/u1/abc.mp3',
+      compilationId: 'comp1',
+      trackId: 'track_id',
+      uploaderUid: 'u1',
+      callerEmail: 'u1@example.com',
+    });
+    expect(result.dedupHit).toBe(true);
+    expect(result.songId).toBe('existing_id');
+    expect(storeFileMock.save).not.toHaveBeenCalled();
+  });
+
+  test('rejects non-author non-admin caller', async () => {
+    compRef.get.mockResolvedValue({ exists: true, data: () => ({ authorUid: 'someone-else' }) });
+    adminAdminsGet.mockResolvedValue({ exists: false });
+    await expect(replaceTrackSongFromStaging({
+      tempPath: 'uploads/u1/abc.mp3',
+      compilationId: 'comp1',
+      trackId: 'track_id',
+      uploaderUid: 'u1',
+      callerEmail: 'u1@example.com',
+    })).rejects.toThrow(/author or an admin/);
+  });
+
+  test('admin (non-author) is allowed to replace', async () => {
+    compRef.get.mockResolvedValue({ exists: true, data: () => ({ authorUid: 'someone-else' }) });
+    adminAdminsGet.mockResolvedValue({ exists: true });
+    songsCollection.get.mockResolvedValueOnce({ empty: true, docs: [] });
+    const result = await replaceTrackSongFromStaging({
+      tempPath: 'uploads/u1/abc.mp3',
+      compilationId: 'comp1',
+      trackId: 'track_id',
+      uploaderUid: 'u1',
+      callerEmail: 'admin@example.com',
+    });
+    expect(result.songId).toBe('new_song_id');
+  });
+
+  test('throws on missing args', async () => {
+    await expect(replaceTrackSongFromStaging({})).rejects.toThrow();
   });
 });

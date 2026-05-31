@@ -13,9 +13,25 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/allowlist/$(request.auth.token.email.lower()));
     }
 
+    // Admins can edit any compilation (not just their own). Membership is
+    // managed via a Firestore-backed /admins/{emailLowercase} collection,
+    // mirroring the /allowlist pattern.
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()));
+    }
+
     // Allowlist: only Functions / admins write (via Admin SDK, bypassing rules).
     // Signed-in users can read their own entry so the client can check membership.
     match /allowlist/{email} {
+      allow read: if isSignedIn() && request.auth.token.email.lower() == email;
+      allow write: if false;
+    }
+
+    // Admins: same shape as /allowlist. Each user can read only their own entry
+    // (to check if they're an admin); writes happen via Admin SDK.
+    match /admins/{email} {
       allow read: if isSignedIn() && request.auth.token.email.lower() == email;
       allow write: if false;
     }
@@ -42,20 +58,26 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Compilations: allowlisted users read; only the owning user (authorUid) writes.
+    // Compilations: allowlisted users read; the owning user (authorUid) or an
+    // admin can update/delete. Creates still require the doc's authorUid to be
+    // the caller — admins create under their own name like everyone else.
     match /compilations/{compId} {
       allow read: if isAllowlisted();
       allow create: if isAllowlisted()
                     && request.resource.data.authorUid == request.auth.uid;
-      allow update: if isAllowlisted() && resource.data.authorUid == request.auth.uid;
-      allow delete: if isAllowlisted() && resource.data.authorUid == request.auth.uid;
+      allow update: if isAllowlisted()
+                    && (resource.data.authorUid == request.auth.uid || isAdmin());
+      allow delete: if isAllowlisted()
+                    && (resource.data.authorUid == request.auth.uid || isAdmin());
 
-      // Tracks subcollection: written by Functions during processSong, readable by allowlisted users.
-      // The owner may also reorder/delete tracks directly (for client-side editing).
+      // Tracks subcollection: written by Functions during processSong, readable by
+      // allowlisted users. The compilation's author OR an admin may also
+      // reorder / edit / delete tracks directly (for client-side editing).
       match /tracks/{trackId} {
         allow read: if isAllowlisted();
         allow write: if isAllowlisted()
-                     && get(/databases/$(database)/documents/compilations/$(compId)).data.authorUid == request.auth.uid;
+                     && (get(/databases/$(database)/documents/compilations/$(compId)).data.authorUid == request.auth.uid
+                         || isAdmin());
       }
     }
 

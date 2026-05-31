@@ -19,3 +19,11 @@ export async function requireAllowlistedCaller(auth) {
   }
   return { uid: auth.uid, email: email.toLowerCase() };
 }
+
+// Server-side admin check. Mirrors the Firestore rule `isAdmin()` — looks up
+// /admins/{emailLowercase} via the Admin SDK.
+export async function isAdminEmail(email) {
+  if (!email) return false;
+  const snap = await admin.firestore().doc(`admins/${email.toLowerCase()}`).get();
+  return snap.exists;
+}

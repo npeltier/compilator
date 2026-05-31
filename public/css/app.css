@@ -419,8 +419,64 @@ body.has-player { padding-bottom: 100px; }
 .player-bar .react:hover { filter: none; transform: scale(1.1); }
 .player-bar .react.active { filter: none; }
 
-/* -------- inline track reactions (compilation page) -------- */
-.tracklist li { grid-template-columns: 32px 1fr auto auto !important; }
+/* -------- compilation hero edit mode -------- */
+.detail-hero .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 24px; }
+.detail-hero.edit-mode .meta input#edTitle {
+  font-family: var(--display);
+  font-size: 48px;
+  letter-spacing: 0.01em;
+  background: var(--bg-elev);
+  border-color: var(--line);
+  padding: 8px 12px;
+  width: 100%;
+}
+.detail-hero.edit-mode .meta label { margin-bottom: 4px; }
+
+/* -------- edit-mode track rows -------- */
+.tracklist.edit li {
+  display: grid;
+  grid-template-columns: 24px 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 4px;
+  cursor: default;
+  position: relative;
+}
+.tracklist.edit li.deleted { opacity: 0.45; }
+.tracklist.edit li.deleted .ed-fields input { text-decoration: line-through; }
+.tracklist.edit li.dragging { opacity: 0.4; }
+.tracklist.edit .grip { color: var(--ink-faint); cursor: grab; font-size: 14px; }
+.tracklist.edit .ed-fields { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; min-width: 0; }
+.tracklist.edit .ed-fields input {
+  font: inherit;
+  padding: 6px 10px;
+  font-size: 14px;
+  background: var(--bg-elev);
+}
+.tracklist.edit .ed-actions { display: flex; gap: 4px; align-items: center; }
+.tracklist.edit .ed-actions button {
+  background: transparent;
+  border: 1px solid var(--line);
+  font-size: 14px;
+  padding: 4px 8px;
+  color: var(--ink-dim);
+}
+.tracklist.edit .ed-actions button:hover { color: var(--ink); border-color: var(--ink-dim); background: transparent; }
+.tracklist.edit .ed-actions .ed-delete:hover { color: var(--accent); border-color: var(--accent); }
+.tracklist.edit .ed-actions .ed-undo { font-size: 11px; margin-left: 6px; color: var(--ink-dim); border: none; }
+.tracklist.edit .ed-progress {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 3px;
+  background: transparent;
+}
+.tracklist.edit .ed-progress > span {
+  display: block; height: 100%; background: var(--accent);
+  width: 0%; transition: width 200ms ease;
+}
+
+/* -------- inline track reactions (compilation page, view mode) -------- */
+.tracklist:not(.edit) li { grid-template-columns: 32px 1fr auto auto !important; }
 .tracklist .tk-meta { min-width: 0; }
 .tracklist .tk-react { display: flex; gap: 4px; }
 .tracklist .tk-react button {

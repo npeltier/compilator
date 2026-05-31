@@ -48,6 +48,12 @@ async function main() {
   });
   console.log(`Allowlisted ${SEED_EMAIL}`);
 
+  await db.collection('admins').doc(SEED_EMAIL).set({
+    addedBy: 'seed-script',
+    addedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  console.log(`Admin: ${SEED_EMAIL}`);
+
   const user = await ensureUser();
 
   await db.collection('users').doc(user.uid).set({

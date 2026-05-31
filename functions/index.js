@@ -1,8 +1,12 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import admin from 'firebase-admin';
 
-import { requireAllowlistedCaller } from './auth.js';
-import { processSongFromStaging, uploadCoverFromStaging } from './processing.js';
+import { isAdminEmail, requireAllowlistedCaller } from './auth.js';
+import {
+  processSongFromStaging,
+  replaceTrackSongFromStaging,
+  uploadCoverFromStaging,
+} from './processing.js';
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -65,6 +69,45 @@ export const uploadCover = onCall({ memory: '256MiB', timeoutSeconds: 60 }, asyn
   } catch (err) {
     console.error('uploadCover error', err);
     throw new HttpsError('internal', err.message || 'Failed to upload cover.');
+  }
+});
+
+/**
+ * replaceTrackSong({ tempPath, compilationId, trackId })
+ *
+ * Swap a track's audio binary in place. Used by the compilation edit mode's
+ * 🔄 button. The compilation's author OR an admin may call this; the new file
+ * goes through the same dedup pipeline as processSong. Per-track title/artist
+ * overrides are preserved; only songId + duration are updated.
+ */
+export const replaceTrackSong = onCall({ memory: '512MiB', timeoutSeconds: 120 }, async (req) => {
+  const { uid, email } = await requireAllowlistedCaller(req.auth);
+  const { tempPath, compilationId, trackId } = req.data || {};
+  if (!tempPath || !compilationId || !trackId) {
+    throw new HttpsError('invalid-argument', 'tempPath, compilationId, and trackId are required.');
+  }
+  if (!tempPath.startsWith(`uploads/${uid}/`)) {
+    throw new HttpsError('permission-denied', 'tempPath must be in your /uploads/<uid>/ folder.');
+  }
+  const compSnap = await admin.firestore().collection('compilations').doc(compilationId).get();
+  if (!compSnap.exists) {
+    throw new HttpsError('not-found', 'Compilation not found.');
+  }
+  const comp = compSnap.data();
+  if (comp.authorUid !== uid && !(await isAdminEmail(email))) {
+    throw new HttpsError('permission-denied', 'You are not the author of this compilation.');
+  }
+  try {
+    return await replaceTrackSongFromStaging({
+      tempPath,
+      compilationId,
+      trackId,
+      uploaderUid: uid,
+      callerEmail: email,
+    });
+  } catch (err) {
+    console.error('replaceTrackSong error', err);
+    throw new HttpsError('internal', err.message || 'Failed to replace track.');
   }
 });
 

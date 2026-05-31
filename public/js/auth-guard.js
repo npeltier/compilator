@@ -1,6 +1,11 @@
-// Page-level auth guard. Pages that require sign-in import this and await
-// `requireAuth()` before rendering. If the user is signed out OR not in the
-// allowlist, they are redirected to /login.html.
+// Shell-level auth guard. The SPA boot script calls `requireAuth()` once on
+// load; pages that need admin privileges call `requireAdmin()`. Both redirect
+// the user to /login.html (or / for non-admins on admin-only pages) when the
+// check fails.
+//
+// Admin membership is stored in Firestore at /admins/{emailLowercase} (mirrors
+// /allowlist). We cache the result per session so views can call isAdmin()
+// synchronously after the initial async resolution.
 
 import { auth, db } from './firebase-init.js';
 import {
@@ -12,13 +17,7 @@ import {
   getDoc,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
 
-// Admins can see /migrate.html and other privileged tools.
-// Client-side only (Firestore rules still enforce per-user ownership for writes).
-export const ADMIN_EMAILS = new Set(['peltier.nicolas@gmail.com']);
-
-export function isAdminEmail(email) {
-  return !!email && ADMIN_EMAILS.has(email.toLowerCase());
-}
+let adminCache = null; // { email: string, isAdmin: bool } — single-session cache
 
 function waitForAuthState() {
   return new Promise((resolve) => {
@@ -35,6 +34,23 @@ export async function isAllowlisted(email) {
   return snap.exists();
 }
 
+// Async check against /admins/{email}. Result cached for the session.
+export async function isAdmin(email) {
+  const e = (email || '').toLowerCase();
+  if (!e) return false;
+  if (adminCache && adminCache.email === e) return adminCache.isAdmin;
+  const snap = await getDoc(doc(db, 'admins', e));
+  adminCache = { email: e, isAdmin: snap.exists() };
+  return adminCache.isAdmin;
+}
+
+// Synchronous fast-path for code that runs after `requireAuth()` resolved.
+// Returns null if isAdmin hasn't been resolved yet for the given email.
+export function isAdminSync(email) {
+  const e = (email || '').toLowerCase();
+  return adminCache && adminCache.email === e ? adminCache.isAdmin : null;
+}
+
 export async function requireAuth({ redirectTo = '/login.html' } = {}) {
   const user = await waitForAuthState();
   if (!user) {
@@ -47,13 +63,15 @@ export async function requireAuth({ redirectTo = '/login.html' } = {}) {
     location.replace(`${redirectTo}?error=not_allowlisted`);
     return new Promise(() => {});
   }
+  // Pre-resolve admin status so views can call isAdminSync afterwards.
+  await isAdmin(user.email);
   hideAdminLinksFor(user);
   return user;
 }
 
 export async function requireAdmin({ redirectTo = '/' } = {}) {
   const user = await requireAuth();
-  if (!isAdminEmail(user.email)) {
+  if (!(await isAdmin(user.email))) {
     location.replace(redirectTo);
     return new Promise(() => {});
   }
@@ -63,7 +81,7 @@ export async function requireAdmin({ redirectTo = '/' } = {}) {
 // Removes admin-only nav links if the current user isn't an admin.
 // Mark links with `data-admin-only` in the HTML; this strips them at runtime.
 function hideAdminLinksFor(user) {
-  if (isAdminEmail(user.email)) return;
+  if (isAdminSync(user.email)) return;
   document.querySelectorAll('[data-admin-only]').forEach((el) => el.remove());
 }
 
