@@ -83,6 +83,7 @@ jobs:
           npx firebase deploy \
             --only firestore:rules,storage,functions,hosting \
             --project compilator-83816 \
-            --non-interactive
+            --non-interactive \
+            --force
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
