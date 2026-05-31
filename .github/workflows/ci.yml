@@ -72,6 +72,19 @@ jobs:
         run: npm ci
         working-directory: functions
 
+      - name: Stamp build metadata
+        # Replace the `content="dev"` placeholders in the build-commit /
+        # build-time meta tags so the deployed site advertises which commit it
+        # was built from. The brand element's tooltip surfaces this in-app.
+        run: |
+          SHA="${GITHUB_SHA::7}"
+          STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          for f in public/index.html public/login.html; do
+            sed -i "s|<meta name=\"build-commit\" content=\"dev\">|<meta name=\"build-commit\" content=\"${SHA}\">|" "$f"
+            sed -i "s|<meta name=\"build-time\" content=\"dev\">|<meta name=\"build-time\" content=\"${STAMP}\">|" "$f"
+          done
+          echo "Stamped build ${SHA} · ${STAMP}"
+
       - name: Authenticate to Google Cloud
         id: auth
         uses: google-github-actions/auth@v2

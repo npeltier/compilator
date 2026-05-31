@@ -9,6 +9,16 @@ import { register, start } from './router.js';
 
 document.getElementById('logout').addEventListener('click', (e) => { e.preventDefault(); logout(); });
 
+// Surface the build version on the brand's tooltip and log it. CI rewrites the
+// meta tags below before `firebase deploy`; locally they read "dev".
+{
+  const commit = document.querySelector('meta[name="build-commit"]')?.content || 'unknown';
+  const time = document.querySelector('meta[name="build-time"]')?.content || 'unknown';
+  const brand = document.querySelector('.brand');
+  if (brand) brand.title = `build ${commit} · ${time}`;
+  console.info(`Compilator build ${commit} · ${time}`);
+}
+
 const user = await requireAuth();
 document.getElementById('who').textContent = user.email;
 
