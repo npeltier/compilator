@@ -25,7 +25,10 @@ service cloud.firestore {
     // Allowlist: only Functions / admins write (via Admin SDK, bypassing rules).
     // Signed-in users can read their own entry so the client can check membership.
     match /allowlist/{email} {
-      allow read: if isSignedIn() && request.auth.token.email.lower() == email;
+      // Each user reads their own entry to check membership; admins can read
+      // the whole collection so the assign-author dropdowns can list everyone.
+      allow read: if isSignedIn()
+                  && (request.auth.token.email.lower() == email || isAdmin());
       allow write: if false;
     }
 

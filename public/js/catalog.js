@@ -28,6 +28,7 @@ const compilationsById = new Map();
 const placementBySongId = new Map();
 const usersByUid = new Map();
 const usersByDisplayName = new Map(); // lowercased displayName → user doc
+const allowlistByEmail = new Map();   // lowercased email → allowlist doc (admin-only)
 let loaded = false;
 
 export async function loadCatalog() {
@@ -93,6 +94,57 @@ export function allUsers() {
   return [...usersByUid.values()].sort((a, b) =>
     (a.displayName || '').localeCompare(b.displayName || '', 'fr'),
   );
+}
+
+// Admin-only: load every /allowlist entry so the "assign author" dropdowns can
+// include friends who haven't signed in yet. Rules block non-admin reads; the
+// caller is expected to gate this behind isAdminSync().
+export async function loadAllowlist() {
+  const snap = await getDocs(collection(db, 'allowlist'));
+  allowlistByEmail.clear();
+  snap.forEach((d) => allowlistByEmail.set(d.id.toLowerCase(), { email: d.id, ...d.data() }));
+}
+
+// Returns the union of /users (signed-in users) and /allowlist (allowlisted
+// people without a /users doc yet), keyed by lowercased email. /users wins on
+// conflicts. Each entry: { key, uid, email, displayName, linked, avatarPath }.
+// `key` is what the dropdown stores as <option value="..."> — uses email so
+// both linked and unlinked entries can coexist; selection logic resolves uid
+// vs empty-string from `linked`.
+export function allAssignableUsers() {
+  const byEmail = new Map();
+  for (const u of usersByUid.values()) {
+    if (!u.email) continue;
+    const k = u.email.toLowerCase();
+    byEmail.set(k, {
+      key: k,
+      uid: u.uid,
+      email: u.email,
+      displayName: u.displayName || u.email,
+      linked: true,
+      avatarPath: u.avatarPath || null,
+    });
+  }
+  for (const a of allowlistByEmail.values()) {
+    const k = a.email.toLowerCase();
+    if (byEmail.has(k)) continue;
+    byEmail.set(k, {
+      key: k,
+      uid: null,
+      email: a.email,
+      displayName: a.email,
+      linked: false,
+      avatarPath: null,
+    });
+  }
+  return [...byEmail.values()].sort((x, y) =>
+    (x.displayName || '').localeCompare(y.displayName || '', 'fr'),
+  );
+}
+
+export function getAssignable(key) {
+  if (!key) return null;
+  return allAssignableUsers().find((u) => u.key === key.toLowerCase()) || null;
 }
 
 // Mutate a user record after the boot fetch — used after the current user

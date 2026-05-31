@@ -1,8 +1,8 @@
 // SPA shell boot. Wires auth-guard, loads catalog + reactions, mounts the
 // router, and renders the persistent player bar.
 
-import { requireAuth, logout } from './auth-guard.js';
-import { loadCatalog } from './catalog.js';
+import { isAdminSync, requireAuth, logout } from './auth-guard.js';
+import { loadAllowlist, loadCatalog } from './catalog.js';
 import { loadReactions } from './reactions.js';
 import { initPlayer } from './player.js';
 import { register, start } from './router.js';
@@ -27,6 +27,10 @@ document.getElementById('who').textContent = user.email;
 await Promise.all([
   loadCatalog(),
   loadReactions(user.uid),
+  // Allowlist is admin-readable only; non-admins skip the fetch (rules would
+  // reject it anyway). Used to populate "assign author" dropdowns with users
+  // who haven't signed in yet.
+  isAdminSync(user.email) ? loadAllowlist().catch(() => {}) : null,
 ]);
 
 initPlayer();

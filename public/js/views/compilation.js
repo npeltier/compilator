@@ -26,7 +26,7 @@ import {
   toggleDislike,
   onChange as onReactionChange,
 } from '../reactions.js';
-import { allUsers, getCompilation, getSong, getUser } from '../catalog.js';
+import { allAssignableUsers, getAssignable, getCompilation, getSong, getUser } from '../catalog.js';
 import { isAdminSync } from '../auth-guard.js';
 import { replaceSongBinary } from '../upload-pipeline.js';
 import { avatarHTML, paintAvatars } from '../avatar.js';
@@ -184,8 +184,10 @@ export async function mount(el, { params }) {
     mode = 'edit';
     const isAdmin = isAdminSync(user.email);
     // Snapshot current state — Cancel restores it.
+    const initialKey = (getUser(comp.authorUid)?.email || comp.authorName || '').toLowerCase();
     editState = {
       title: liveCompTitle,
+      authorKey: initialKey,
       authorUid: comp.authorUid || '',
       authorName: comp.authorName || '',
       rows: tracks.map((t) => ({
@@ -199,18 +201,18 @@ export async function mount(el, { params }) {
       })),
     };
 
-    // Admin-only author dropdown. Options come from /users (people who've
-    // signed in at least once). Current author is pre-selected; if the
-    // current authorUid points to a user no longer in the catalog, the
-    // dropdown still shows that fallback as the first option.
-    const usersList = allUsers();
-    const currentUserInList = editState.authorUid && usersList.some((u) => u.uid === editState.authorUid);
+    // Admin-only author dropdown. Options union /users (signed-in) and
+    // /allowlist (allowlisted but not yet signed in). Current author is
+    // pre-selected by email key; if it doesn't match anyone we show a
+    // "(hors liste)" placeholder so the current value is still visible.
+    const assignableList = allAssignableUsers();
+    const currentInList = editState.authorKey && assignableList.some((u) => u.key === editState.authorKey);
     const authorBlock = isAdmin
       ? `
         <label for="edAuthor" style="margin-top:8px;">Auteur</label>
         <select id="edAuthor">
-          ${!currentUserInList && editState.authorUid ? `<option value="${escape(editState.authorUid)}" selected>${escape(editState.authorName)} (hors liste)</option>` : ''}
-          ${usersList.map((u) => `<option value="${escape(u.uid)}" ${u.uid === editState.authorUid ? 'selected' : ''}>${escape(u.displayName || u.email || u.uid)}</option>`).join('')}
+          ${!currentInList && (editState.authorKey || editState.authorName) ? `<option value="" selected>${escape(editState.authorName || editState.authorKey)} (hors liste)</option>` : ''}
+          ${assignableList.map((u) => `<option value="${escape(u.key)}" ${u.key === editState.authorKey ? 'selected' : ''}>${escape(u.displayName || u.email || u.key)}${u.linked ? '' : ' (en attente)'}</option>`).join('')}
         </select>
       `
       : `<div class="by" style="margin-top:8px;">par ${escape(getUser(comp.authorUid)?.displayName || comp.authorName)}</div>`;
@@ -237,8 +239,9 @@ export async function mount(el, { params }) {
 
     if (isAdmin) {
       main.querySelector('#edAuthor').addEventListener('change', (e) => {
-        const picked = getUser(e.target.value);
-        editState.authorUid = e.target.value;
+        const picked = getAssignable(e.target.value);
+        editState.authorKey = e.target.value;
+        editState.authorUid = picked?.uid || '';
         editState.authorName = picked?.displayName || picked?.email || editState.authorName;
       });
     }
@@ -382,8 +385,12 @@ export async function mount(el, { params }) {
       }
 
       // Author reassignment (admin only — the dropdown isn't rendered for
-      // non-admins so editState.authorUid stays at its initial value for them).
-      if (editState.authorUid && editState.authorUid !== (comp.authorUid || '')) {
+      // non-admins so editState.authorKey stays at its initial value).
+      // authorUid may be '' when admin picked an allowlist-only entry whose
+      // assignee hasn't signed in yet; rules permit non-self authorUid for
+      // admins, so the write is accepted.
+      const initialKey = (getUser(comp.authorUid)?.email || comp.authorName || '').toLowerCase();
+      if (editState.authorKey && editState.authorKey !== initialKey) {
         batch.update(compRef, {
           authorUid: editState.authorUid,
           authorName: editState.authorName,
@@ -432,7 +439,7 @@ export async function mount(el, { params }) {
         comp.title = trimmedTitle;
         liveCompTitle = trimmedTitle;
       }
-      if (editState.authorUid && editState.authorUid !== (comp.authorUid || '')) {
+      if (editState.authorKey && editState.authorKey !== initialKey) {
         comp.authorUid = editState.authorUid;
         comp.authorName = editState.authorName;
       }

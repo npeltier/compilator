@@ -4,7 +4,7 @@
 import { auth, db } from '../firebase-init.js';
 import { requireAdmin } from '../auth-guard.js';
 import { uploadSong, runWithConcurrency } from '../upload-pipeline.js';
-import { allUsers, getUser } from '../catalog.js';
+import { allAssignableUsers, getAssignable } from '../catalog.js';
 import {
   addDoc,
   collection,
@@ -31,9 +31,10 @@ export async function mount(el) {
   // Admin-only — bounces non-admins to /.
   const user = await requireAdmin();
   const myDisplayName = (await getDoc(doc(db, 'users', user.uid))).data()?.displayName || user.email;
-  const usersList = allUsers();
-  const userOptions = (selectedUid) => usersList
-    .map((u) => `<option value="${escape(u.uid)}" ${u.uid === selectedUid ? 'selected' : ''}>${escape(u.displayName || u.email || u.uid)}</option>`)
+  const myKey = (user.email || '').toLowerCase();
+  const assignableList = allAssignableUsers();
+  const userOptions = (selectedKey) => assignableList
+    .map((u) => `<option value="${escape(u.key)}" ${u.key === selectedKey ? 'selected' : ''}>${escape(u.displayName || u.email || u.key)}${u.linked ? '' : ' (en attente)'}</option>`)
     .join('');
 
   el.innerHTML = `
@@ -65,7 +66,7 @@ export async function mount(el) {
           </div>
           <div>
             <label for="defAuthor">Auteur</label>
-            <select id="defAuthor">${userOptions(user.uid)}</select>
+            <select id="defAuthor">${userOptions(myKey)}</select>
           </div>
         </div>
       </section>
@@ -85,14 +86,15 @@ export async function mount(el) {
   const defSeason = el.querySelector('#defSeason');
   const defYear = el.querySelector('#defYear');
   const defAuthor = el.querySelector('#defAuthor');
-  defAuthor.value = user.uid;
+  defAuthor.value = myKey;
   defYear.value = new Date().getFullYear();
   function defaults() {
-    const picked = getUser(defAuthor.value);
+    const picked = getAssignable(defAuthor.value);
     return {
       season: defSeason.value,
       year: defYear.value,
-      authorUid: defAuthor.value,
+      authorKey: defAuthor.value,
+      authorUid: picked?.uid || '',
       authorName: picked?.displayName || picked?.email || myDisplayName,
     };
   }
@@ -116,7 +118,7 @@ export async function mount(el) {
       const card = {
         file: f, songs: [], status: 'pending',
         season: d.season, year: d.year,
-        authorUid: d.authorUid, authorName: d.authorName,
+        authorKey: d.authorKey, authorUid: d.authorUid, authorName: d.authorName,
       };
       zips.push(card);
       renderZips();
@@ -179,7 +181,7 @@ export async function mount(el) {
           </div>
           <div>
             <label>Auteur</label>
-            <select data-k="authorUid">${userOptions(c.authorUid)}</select>
+            <select data-k="authorKey">${userOptions(c.authorKey)}</select>
           </div>
         </div>
         <ul class="queue">
@@ -200,8 +202,9 @@ export async function mount(el) {
         const evt = cell.tagName === 'SELECT' ? 'change' : 'input';
         cell.addEventListener(evt, () => {
           c[cell.dataset.k] = cell.value;
-          if (cell.dataset.k === 'authorUid') {
-            const picked = getUser(cell.value);
+          if (cell.dataset.k === 'authorKey') {
+            const picked = getAssignable(cell.value);
+            c.authorUid = picked?.uid || '';
             c.authorName = picked?.displayName || picked?.email || c.authorName;
           }
         });
@@ -221,7 +224,10 @@ export async function mount(el) {
           title: c.title || inferFromFilename(c.file.name).title,
           season: c.season || 'ete',
           year: parseInt(c.year, 10) || new Date().getFullYear(),
-          authorUid: c.authorUid || user.uid,
+          // Empty when admin picked an allowlisted-only entry — the assignee
+          // hasn't signed in yet, so there's no Firebase Auth uid to bind to.
+          // Only admin can save this; rules permit non-self authorUid for admins.
+          authorUid: c.authorUid || '',
           authorName: c.authorName || myDisplayName,
           coverPath: null,
           coverSource: null,
