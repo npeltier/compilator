@@ -1,5 +1,4 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import { onSchedule } from 'firebase-functions/v2/scheduler';
 import admin from 'firebase-admin';
 
 import { requireAllowlistedCaller } from './auth.js';
@@ -69,21 +68,6 @@ export const uploadCover = onCall({ memory: '256MiB', timeoutSeconds: 60 }, asyn
   }
 });
 
-/**
- * cleanupStaging — daily sweep of /uploads/** older than 24 h.
- */
-export const cleanupStaging = onSchedule('every 24 hours', async () => {
-  const bucket = admin.storage().bucket();
-  const [files] = await bucket.getFiles({ prefix: 'uploads/' });
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  let deleted = 0;
-  await Promise.all(files.map(async (f) => {
-    const [meta] = await f.getMetadata();
-    const updated = new Date(meta.updated).getTime();
-    if (updated < cutoff) {
-      await f.delete();
-      deleted++;
-    }
-  }));
-  console.log(`cleanupStaging: deleted ${deleted} stale files`);
-});
+// Staging cleanup of /uploads/** is handled by a Cloud Storage lifecycle rule
+// configured outside of code (auto-delete after 1 day) — no scheduled function,
+// no Cloud Scheduler permissions, no per-execution cost.
