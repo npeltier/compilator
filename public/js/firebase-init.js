@@ -33,11 +33,12 @@ const firebaseConfig = IS_LOCAL ? {
   storageBucket: 'demo-compilator.appspot.com',
   appId: 'demo-compilator',
 } : {
-  apiKey: 'AIzaSyDemoKeyForLocalEmulators_OverriddenInProd',
+  apiKey: 'AIzaSyBcO7FSeLrBOfnRzpy3UJD6GwGxsi0nGVs',
   authDomain: 'compilator-83816.firebaseapp.com',
   projectId: 'compilator-83816',
   storageBucket: 'compilator-83816.appspot.com',
-  appId: 'compilator-83816',
+  messagingSenderId: '1088164732233',
+  appId: '1:1088164732233:web:a0227a51ab68db52a10e98',
 };
 
 export const app = initializeApp(firebaseConfig);
