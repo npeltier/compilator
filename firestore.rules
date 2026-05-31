@@ -64,7 +64,7 @@ service cloud.firestore {
     match /compilations/{compId} {
       allow read: if isAllowlisted();
       allow create: if isAllowlisted()
-                    && request.resource.data.authorUid == request.auth.uid;
+                    && (request.resource.data.authorUid == request.auth.uid || isAdmin());
       allow update: if isAllowlisted()
                     && (resource.data.authorUid == request.auth.uid || isAdmin());
       allow delete: if isAllowlisted()

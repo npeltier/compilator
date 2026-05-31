@@ -102,15 +102,17 @@ export async function mount(el, { query }) {
   // ---- Author chips ----
   const authors = Array.from(new Set(comps.map((c) => c.authorName).filter(Boolean))).sort();
   const chipsEl = el.querySelector('#authorChips');
-  const mkChip = (label, active, href) => {
+  const mkChip = (label, active, href, { withAvatar = false } = {}) => {
     const a = document.createElement('a');
     a.className = 'chip' + (active ? ' active' : '');
-    a.textContent = label;
     a.href = href;
+    a.innerHTML = withAvatar
+      ? `${avatarHTML(label, { size: 'xs' })}<span>${escape(label)}</span>`
+      : escape(label);
     return a;
   };
   chipsEl.appendChild(mkChip('Tout', !filterAuthor, '/'));
-  authors.forEach((a) => chipsEl.appendChild(mkChip(a, a === filterAuthor, `/author/${encodeURIComponent(a)}`)));
+  authors.forEach((a) => chipsEl.appendChild(mkChip(a, a === filterAuthor, `/author/${encodeURIComponent(a)}`, { withAvatar: true })));
 
   const shown = filterAuthor ? comps.filter((c) => c.authorName === filterAuthor) : comps;
   el.querySelector('#empty').hidden = shown.length > 0;

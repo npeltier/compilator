@@ -676,8 +676,11 @@ body.has-player { padding-bottom: 100px; }
 /* -------- author / filter chips -------- */
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 32px; }
 .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
-  padding: 6px 12px;
+  padding: 4px 12px;
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--ink-dim);
@@ -686,6 +689,7 @@ body.has-player { padding-bottom: 100px; }
   letter-spacing: 0;
   background: transparent;
 }
+.chip .avatar { margin-left: -4px; }
 .chip:hover, .chip.active { color: var(--bg); background: var(--ink); border-color: var(--ink); }
 
 /* -------- responsive -------- */

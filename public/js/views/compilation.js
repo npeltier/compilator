@@ -26,7 +26,7 @@ import {
   toggleDislike,
   onChange as onReactionChange,
 } from '../reactions.js';
-import { getCompilation, getSong } from '../catalog.js';
+import { allUsers, getCompilation, getSong, getUser } from '../catalog.js';
 import { isAdminSync } from '../auth-guard.js';
 import { replaceSongBinary } from '../upload-pipeline.js';
 import { avatarHTML, paintAvatars } from '../avatar.js';
@@ -114,7 +114,7 @@ export async function mount(el, { params }) {
         <div class="meta">
           <p class="eyebrow">${comp.season === 'noel' ? '❄ Noël' : '☀ Été'} ${comp.year || ''}</p>
           <h1>${escape(liveCompTitle)}</h1>
-          <div class="by">par <a class="by-link" href="/author/${encodeURIComponent(comp.authorName)}">${avatarHTML(comp.authorName, { size: 'sm' })}<span>${escape(comp.authorName)}</span></a></div>
+          <div class="by">par <a class="by-link" href="/author/${encodeURIComponent(comp.authorName)}">${avatarHTML(comp.authorName, { size: 'sm' })}<span>${escape(getUser(comp.authorUid)?.displayName || comp.authorName)}</span></a></div>
           <div class="stats">${tracks.length} morceau${tracks.length > 1 ? 'x' : ''} · ${fmt(totalDur)}</div>
           <div class="actions">
             <button class="btn-accent" id="playAll">▶ Tout écouter</button>
@@ -182,9 +182,12 @@ export async function mount(el, { params }) {
 
   function renderEdit() {
     mode = 'edit';
+    const isAdmin = isAdminSync(user.email);
     // Snapshot current state — Cancel restores it.
     editState = {
       title: liveCompTitle,
+      authorUid: comp.authorUid || '',
+      authorName: comp.authorName || '',
       rows: tracks.map((t) => ({
         trackId: t.trackId,
         songId: t.songId,
@@ -195,6 +198,23 @@ export async function mount(el, { params }) {
         deleted: false,
       })),
     };
+
+    // Admin-only author dropdown. Options come from /users (people who've
+    // signed in at least once). Current author is pre-selected; if the
+    // current authorUid points to a user no longer in the catalog, the
+    // dropdown still shows that fallback as the first option.
+    const usersList = allUsers();
+    const currentUserInList = editState.authorUid && usersList.some((u) => u.uid === editState.authorUid);
+    const authorBlock = isAdmin
+      ? `
+        <label for="edAuthor" style="margin-top:8px;">Auteur</label>
+        <select id="edAuthor">
+          ${!currentUserInList && editState.authorUid ? `<option value="${escape(editState.authorUid)}" selected>${escape(editState.authorName)} (hors liste)</option>` : ''}
+          ${usersList.map((u) => `<option value="${escape(u.uid)}" ${u.uid === editState.authorUid ? 'selected' : ''}>${escape(u.displayName || u.email || u.uid)}</option>`).join('')}
+        </select>
+      `
+      : `<div class="by" style="margin-top:8px;">par ${escape(getUser(comp.authorUid)?.displayName || comp.authorName)}</div>`;
+
     main.innerHTML = `
       <div class="detail-hero edit-mode">
         <div class="art ${comp.coverPath ? '' : 'placeholder'}" id="hero-art"></div>
@@ -202,7 +222,7 @@ export async function mount(el, { params }) {
           <p class="eyebrow">${comp.season === 'noel' ? '❄ Noël' : '☀ Été'} ${comp.year || ''}</p>
           <label for="edTitle" style="margin-top:8px;">Titre de la compilation</label>
           <input id="edTitle" value="${escape(editState.title)}">
-          <div class="by" style="margin-top:8px;">par ${escape(comp.authorName)}</div>
+          ${authorBlock}
           <div class="stats" id="edStats"></div>
           <div class="actions edit-actions">
             <button class="btn-ghost" id="cancelEdit">Annuler</button>
@@ -214,6 +234,14 @@ export async function mount(el, { params }) {
       <ol class="tracklist edit" id="edTracks"></ol>
     `;
     paintHeroCover();
+
+    if (isAdmin) {
+      main.querySelector('#edAuthor').addEventListener('change', (e) => {
+        const picked = getUser(e.target.value);
+        editState.authorUid = e.target.value;
+        editState.authorName = picked?.displayName || picked?.email || editState.authorName;
+      });
+    }
 
     main.querySelector('#edTitle').addEventListener('input', (e) => {
       editState.title = e.target.value;
@@ -353,6 +381,16 @@ export async function mount(el, { params }) {
         batch.update(compRef, { title: trimmedTitle, updatedAt: serverTimestamp() });
       }
 
+      // Author reassignment (admin only — the dropdown isn't rendered for
+      // non-admins so editState.authorUid stays at its initial value for them).
+      if (editState.authorUid && editState.authorUid !== (comp.authorUid || '')) {
+        batch.update(compRef, {
+          authorUid: editState.authorUid,
+          authorName: editState.authorName,
+          updatedAt: serverTimestamp(),
+        });
+      }
+
       // Compute new order for the surviving rows.
       const surviving = editState.rows.filter((r) => !r.deleted);
       let deletedDurationTotal = 0;
@@ -393,6 +431,10 @@ export async function mount(el, { params }) {
       if (trimmedTitle && trimmedTitle !== comp.title) {
         comp.title = trimmedTitle;
         liveCompTitle = trimmedTitle;
+      }
+      if (editState.authorUid && editState.authorUid !== (comp.authorUid || '')) {
+        comp.authorUid = editState.authorUid;
+        comp.authorName = editState.authorName;
       }
       tracks = surviving.map((r, i) => {
         const original = tracks.find((t) => t.trackId === r.trackId);

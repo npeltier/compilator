@@ -89,6 +89,11 @@ export function getUser(uid) { return usersByUid.get(uid) || null; }
 export function getUserByDisplayName(name) {
   return name ? usersByDisplayName.get(name.toLowerCase()) || null : null;
 }
+export function allUsers() {
+  return [...usersByUid.values()].sort((a, b) =>
+    (a.displayName || '').localeCompare(b.displayName || '', 'fr'),
+  );
+}
 
 // Mutate a user record after the boot fetch — used after the current user
 // updates their own profile (displayName / avatar) so the rest of the SPA

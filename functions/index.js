@@ -20,7 +20,7 @@ if (admin.apps.length === 0) {
  * file the song, and create the track row in the compilation.
  */
 export const processSong = onCall({ memory: '512MiB', timeoutSeconds: 120 }, async (req) => {
-  const { uid } = await requireAllowlistedCaller(req.auth);
+  const { uid, email } = await requireAllowlistedCaller(req.auth);
   const { tempPath, compilationId, order } = req.data || {};
   if (!tempPath || !compilationId || order == null) {
     throw new HttpsError('invalid-argument', 'tempPath, compilationId, and order are required.');
@@ -29,12 +29,12 @@ export const processSong = onCall({ memory: '512MiB', timeoutSeconds: 120 }, asy
   if (!tempPath.startsWith(`uploads/${uid}/`)) {
     throw new HttpsError('permission-denied', 'tempPath must be in your /uploads/<uid>/ folder.');
   }
-  // Ownership check on the compilation.
+  // Ownership check on the compilation — author OR admin.
   const compSnap = await admin.firestore().collection('compilations').doc(compilationId).get();
   if (!compSnap.exists) {
     throw new HttpsError('not-found', 'Compilation not found.');
   }
-  if (compSnap.data().authorUid !== uid) {
+  if (compSnap.data().authorUid !== uid && !(await isAdminEmail(email))) {
     throw new HttpsError('permission-denied', 'You are not the author of this compilation.');
   }
   try {
@@ -51,7 +51,7 @@ export const processSong = onCall({ memory: '512MiB', timeoutSeconds: 120 }, asy
  * Move a staged cover image (uploaded to /uploads/{uid}/cover-...) into /covers/{compId}.{ext}.
  */
 export const uploadCover = onCall({ memory: '256MiB', timeoutSeconds: 60 }, async (req) => {
-  const { uid } = await requireAllowlistedCaller(req.auth);
+  const { uid, email } = await requireAllowlistedCaller(req.auth);
   const { tempPath, compilationId, ext } = req.data || {};
   if (!tempPath || !compilationId || !ext) {
     throw new HttpsError('invalid-argument', 'tempPath, compilationId, ext are required.');
@@ -61,7 +61,7 @@ export const uploadCover = onCall({ memory: '256MiB', timeoutSeconds: 60 }, asyn
   }
   const compSnap = await admin.firestore().collection('compilations').doc(compilationId).get();
   if (!compSnap.exists) throw new HttpsError('not-found', 'Compilation not found.');
-  if (compSnap.data().authorUid !== uid) {
+  if (compSnap.data().authorUid !== uid && !(await isAdminEmail(email))) {
     throw new HttpsError('permission-denied', 'You are not the author of this compilation.');
   }
   try {

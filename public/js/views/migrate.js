@@ -4,6 +4,7 @@
 import { auth, db } from '../firebase-init.js';
 import { requireAdmin } from '../auth-guard.js';
 import { uploadSong, runWithConcurrency } from '../upload-pipeline.js';
+import { allUsers, getUser } from '../catalog.js';
 import {
   addDoc,
   collection,
@@ -30,6 +31,10 @@ export async function mount(el) {
   // Admin-only — bounces non-admins to /.
   const user = await requireAdmin();
   const myDisplayName = (await getDoc(doc(db, 'users', user.uid))).data()?.displayName || user.email;
+  const usersList = allUsers();
+  const userOptions = (selectedUid) => usersList
+    .map((u) => `<option value="${escape(u.uid)}" ${u.uid === selectedUid ? 'selected' : ''}>${escape(u.displayName || u.email || u.uid)}</option>`)
+    .join('');
 
   el.innerHTML = `
     <div class="shell-narrow">
@@ -60,7 +65,7 @@ export async function mount(el) {
           </div>
           <div>
             <label for="defAuthor">Auteur</label>
-            <input id="defAuthor" placeholder="ex. Nicolas P.">
+            <select id="defAuthor">${userOptions(user.uid)}</select>
           </div>
         </div>
       </section>
@@ -80,10 +85,16 @@ export async function mount(el) {
   const defSeason = el.querySelector('#defSeason');
   const defYear = el.querySelector('#defYear');
   const defAuthor = el.querySelector('#defAuthor');
-  defAuthor.value = myDisplayName;
+  defAuthor.value = user.uid;
   defYear.value = new Date().getFullYear();
   function defaults() {
-    return { season: defSeason.value, year: defYear.value, author: defAuthor.value };
+    const picked = getUser(defAuthor.value);
+    return {
+      season: defSeason.value,
+      year: defYear.value,
+      authorUid: defAuthor.value,
+      authorName: picked?.displayName || picked?.email || myDisplayName,
+    };
   }
 
   const drop = el.querySelector('#drop');
@@ -102,7 +113,11 @@ export async function mount(el) {
     for (const f of files) {
       if (!f.name.toLowerCase().endsWith('.zip')) continue;
       const d = defaults();
-      const card = { file: f, songs: [], status: 'pending', season: d.season, year: d.year, author: d.author };
+      const card = {
+        file: f, songs: [], status: 'pending',
+        season: d.season, year: d.year,
+        authorUid: d.authorUid, authorName: d.authorName,
+      };
       zips.push(card);
       renderZips();
       try {
@@ -164,7 +179,7 @@ export async function mount(el) {
           </div>
           <div>
             <label>Auteur</label>
-            <input data-k="author" value="${escape(c.author || '')}">
+            <select data-k="authorUid">${userOptions(c.authorUid)}</select>
           </div>
         </div>
         <ul class="queue">
@@ -182,7 +197,14 @@ export async function mount(el) {
         </ul>
       `;
       card.querySelectorAll('[data-k]').forEach((cell) => {
-        cell.addEventListener('input', () => { c[cell.dataset.k] = cell.value; });
+        const evt = cell.tagName === 'SELECT' ? 'change' : 'input';
+        cell.addEventListener(evt, () => {
+          c[cell.dataset.k] = cell.value;
+          if (cell.dataset.k === 'authorUid') {
+            const picked = getUser(cell.value);
+            c.authorName = picked?.displayName || picked?.email || c.authorName;
+          }
+        });
       });
       zipsEl.appendChild(card);
     });
@@ -199,8 +221,8 @@ export async function mount(el) {
           title: c.title || inferFromFilename(c.file.name).title,
           season: c.season || 'ete',
           year: parseInt(c.year, 10) || new Date().getFullYear(),
-          authorUid: user.uid,
-          authorName: c.author || myDisplayName,
+          authorUid: c.authorUid || user.uid,
+          authorName: c.authorName || myDisplayName,
           coverPath: null,
           coverSource: null,
           status: 'draft',
