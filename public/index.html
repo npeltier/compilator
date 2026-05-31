@@ -1,89 +1,157 @@
-<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Welcome to Firebase Hosting</title>
-
-    <!-- update the version number as needed -->
-    <script defer src="/__/firebase/10.5.2/firebase-app-compat.js"></script>
-    <!-- include only the Firebase features as you need -->
-    <script defer src="/__/firebase/10.5.2/firebase-auth-compat.js"></script>
-    <script defer src="/__/firebase/10.5.2/firebase-database-compat.js"></script>
-    <script defer src="/__/firebase/10.5.2/firebase-firestore-compat.js"></script>
-    <script defer src="/__/firebase/10.5.2/firebase-functions-compat.js"></script>
-    <script defer src="/__/firebase/10.5.2/firebase-messaging-compat.js"></script>
-    <script defer src="/__/firebase/10.5.2/firebase-storage-compat.js"></script>
-    <script defer src="/__/firebase/10.5.2/firebase-analytics-compat.js"></script>
-    <script defer src="/__/firebase/10.5.2/firebase-remote-config-compat.js"></script>
-    <script defer src="/__/firebase/10.5.2/firebase-performance-compat.js"></script>
-    <!-- 
-      initialize the SDK after all desired features are loaded, set useEmulator to false
-      to avoid connecting the SDK to running emulators.
-    -->
-    <script defer src="/__/firebase/init.js?useEmulator=true"></script>
-
-    <style media="screen">
-      body { background: #ECEFF1; color: rgba(0,0,0,0.87); font-family: Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; }
-      #message { background: white; max-width: 360px; margin: 100px auto 16px; padding: 32px 24px; border-radius: 3px; }
-      #message h2 { color: #ffa100; font-weight: bold; font-size: 16px; margin: 0 0 8px; }
-      #message h1 { font-size: 22px; font-weight: 300; color: rgba(0,0,0,0.6); margin: 0 0 16px;}
-      #message p { line-height: 140%; margin: 16px 0 24px; font-size: 14px; }
-      #message a { display: block; text-align: center; background: #039be5; text-transform: uppercase; text-decoration: none; color: white; padding: 16px; border-radius: 4px; }
-      #message, #message a { box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24); }
-      #load { color: rgba(0,0,0,0.4); text-align: center; font-size: 13px; }
-      @media (max-width: 600px) {
-        body, #message { margin-top: 0; background: white; box-shadow: none; }
-        body { border-top: 16px solid #ffa100; }
-      }
-    </style>
-  </head>
-  <body>
-    <div id="message">
-      <h2>Welcome</h2>
-      <h1>Firebase Hosting Setup Complete</h1>
-      <p>You're seeing this because you've successfully setup Firebase Hosting. Now it's time to go build something extraordinary!</p>
-      <a target="_blank" href="https://firebase.google.com/docs/hosting/">Open Hosting Documentation</a>
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Compilator</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <nav class="topbar">
+    <a class="brand" href="/">Compilator</a>
+    <div class="nav-links">
+      <a href="/upload.html">Prochaine compil</a>
+      <a href="/migrate.html" data-admin-only>Import</a>
+      <a href="/profile.html">Profil</a>
+      <a href="#" id="logout">Déconnexion</a>
+      <span class="who" id="who"></span>
     </div>
-    <p id="load">Firebase SDK Loading&hellip;</p>
+  </nav>
 
-    <script>
-      document.addEventListener('DOMContentLoaded', function() {
-        const loadEl = document.querySelector('#load');
-        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
-        // // The Firebase SDK is initialized and available here!
-        //
-        // firebase.auth().onAuthStateChanged(user => { });
-        // firebase.database().ref('/path/to/ref').on('value', snapshot => { });
-        // firebase.firestore().doc('/foo/bar').get().then(() => { });
-        // firebase.functions().httpsCallable('yourFunction')().then(() => { });
-        // firebase.messaging().requestPermission().then(() => { });
-        // firebase.storage().ref('/path/to/ref').getDownloadURL().then(() => { });
-        // firebase.analytics(); // call to activate
-        // firebase.analytics().logEvent('tutorial_completed');
-        // firebase.performance(); // call to activate
-        //
-        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
+  <main class="shell">
+    <div id="nextBanner"></div>
+    <div class="chip-row" id="authorChips"></div>
+    <div id="empty" class="notice" hidden>Aucune compilation pour l'instant. <a href="/upload.html">Crée la première</a>.</div>
+    <div id="years"></div>
+  </main>
 
-        try {
-          let app = firebase.app();
-          let features = [
-            'auth', 
-            'database', 
-            'firestore',
-            'functions',
-            'messaging', 
-            'storage', 
-            'analytics', 
-            'remoteConfig',
-            'performance',
-          ].filter(feature => typeof app[feature] === 'function');
-          loadEl.textContent = `Firebase SDK loaded with ${features.join(', ')}`;
-        } catch (e) {
-          console.error(e);
-          loadEl.textContent = 'Error loading the Firebase SDK, check the console.';
+  <script type="module">
+    import { db, storage, auth } from '/js/firebase-init.js';
+    import { requireAuth, logout } from '/js/auth-guard.js';
+    import { nextCompilationSlot, slotLabel, deadlineLabel } from '/js/slot.js';
+    import { collection, getDocs, orderBy, query } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
+    import { ref as storageRef, getDownloadURL } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js';
+
+    document.getElementById('logout').addEventListener('click', (e) => { e.preventDefault(); logout(); });
+
+    const user = await requireAuth();
+    document.getElementById('who').textContent = user.email;
+
+    const params = new URLSearchParams(location.search);
+    const filterAuthor = params.get('author');
+
+    const snap = await getDocs(query(collection(db, 'compilations'), orderBy('createdAt', 'desc')));
+    const comps = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // ---- Next-slot banner ----
+    const slot = nextCompilationSlot();
+    const mine = comps.find(c => c.authorUid === user.uid && c.season === slot.season && c.year === slot.year);
+    const banner = document.getElementById('nextBanner');
+    const slotTxt = slotLabel(slot);
+    const deadTxt = deadlineLabel(slot);
+    if (!mine) {
+      banner.innerHTML = `
+        <section class="next-banner todo">
+          <div class="text">
+            <p class="eyebrow">Prochaine compil</p>
+            <div class="head">${slotTxt}</div>
+            <div class="sub">À rendre avant le ${deadTxt} — tu n'as encore rien envoyé.</div>
+          </div>
+          <a class="cta" href="/upload.html">Commencer</a>
+        </section>
+      `;
+    } else if (mine.status !== 'published') {
+      banner.innerHTML = `
+        <section class="next-banner wip">
+          <div class="text">
+            <p class="eyebrow">Prochaine compil — en cours</p>
+            <div class="head">${escape(mine.title || slotTxt)}</div>
+            <div class="sub">${mine.trackCount || 0} morceau${(mine.trackCount || 0) > 1 ? 'x' : ''} déjà déposés · à rendre avant le ${deadTxt}.</div>
+          </div>
+          <a class="cta" href="/compilation.html?id=${mine.id}">Reprendre</a>
+        </section>
+      `;
+    } else {
+      banner.innerHTML = `
+        <section class="next-banner done">
+          <div class="text">
+            <p class="eyebrow">Prochaine compil</p>
+            <div class="head">${escape(mine.title)} · ${slotTxt}</div>
+            <div class="sub">Publiée. Bravo.</div>
+          </div>
+          <a class="cta" href="/compilation.html?id=${mine.id}">Écouter</a>
+        </section>
+      `;
+    }
+
+    // Author chips
+    const authors = Array.from(new Set(comps.map(c => c.authorName).filter(Boolean))).sort();
+    const chipsEl = document.getElementById('authorChips');
+    const mkChip = (label, active, href) => {
+      const a = document.createElement('a');
+      a.className = 'chip' + (active ? ' active' : '');
+      a.textContent = label;
+      a.href = href;
+      return a;
+    };
+    chipsEl.appendChild(mkChip('Tout', !filterAuthor, '/'));
+    authors.forEach(a => chipsEl.appendChild(mkChip(a, a === filterAuthor, `/?author=${encodeURIComponent(a)}`)));
+
+    const shown = filterAuthor ? comps.filter(c => c.authorName === filterAuthor) : comps;
+    document.getElementById('empty').hidden = shown.length > 0;
+
+    // Group by year, then by season within year.
+    const byYear = new Map();
+    for (const c of shown) {
+      const y = c.year || new Date(c.createdAt?.toMillis?.() || Date.now()).getFullYear();
+      if (!byYear.has(y)) byYear.set(y, []);
+      byYear.get(y).push(c);
+    }
+    const yearsSorted = [...byYear.keys()].sort((a, b) => b - a);
+
+    const yearsEl = document.getElementById('years');
+    const seasonLabel = { ete: 'Été', noel: 'Noël' };
+
+    for (const y of yearsSorted) {
+      const groups = byYear.get(y);
+      const winterFirst = groups.filter(c => c.season === 'noel');
+      const summer = groups.filter(c => c.season === 'ete');
+      const other = groups.filter(c => c.season !== 'ete' && c.season !== 'noel');
+      for (const [seasonKey, list] of [['noel', winterFirst], ['ete', summer], ['other', other]]) {
+        if (list.length === 0) continue;
+        const block = document.createElement('section');
+        block.className = `season-block ${seasonKey === 'noel' ? 'winter' : seasonKey === 'ete' ? 'summer' : ''}`;
+        block.innerHTML = `
+          <header>
+            <h2>${seasonLabel[seasonKey] || ''} ${y}</h2>
+            <span class="count">${list.length} compilation${list.length > 1 ? 's' : ''}</span>
+          </header>
+          <div class="cover-grid"></div>
+        `;
+        const grid = block.querySelector('.cover-grid');
+        for (const c of list) {
+          const card = document.createElement('a');
+          card.className = 'cover-card';
+          card.href = `/compilation.html?id=${c.id}`;
+          card.innerHTML = `
+            <div class="art ${c.coverPath ? '' : 'placeholder'}" ${c.coverPath ? '' : `data-letter="${(c.title || '?')[0].toUpperCase()}"`}>${c.coverPath ? '' : (c.title || '?')[0].toUpperCase()}</div>
+            <div class="title">${escape(c.title)}</div>
+            <div class="author">${escape(c.authorName || '')}</div>
+          `;
+          grid.appendChild(card);
+          if (c.coverPath) {
+            getDownloadURL(storageRef(storage, c.coverPath))
+              .then(url => { card.querySelector('.art').style.backgroundImage = `url(${url})`; })
+              .catch(() => {});
+          }
         }
-      });
-    </script>
-  </body>
+        yearsEl.appendChild(block);
+      }
+    }
+
+    function escape(s) {
+      return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+  </script>
+</body>
 </html>

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Compilator — connexion</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <main class="login-card">
+    <h1>Compilator</h1>
+    <p class="tagline">Compilations musicales, par nous, pour nous.</p>
+
+    <div id="error" class="error" hidden></div>
+    <div id="notice" class="notice" hidden></div>
+
+    <form id="form">
+      <label for="email">Adresse e-mail</label>
+      <input id="email" type="email" autocomplete="email" required>
+
+      <label for="password">Mot de passe</label>
+      <input id="password" type="password" autocomplete="current-password" required minlength="6">
+
+      <button type="submit" id="submit" class="btn-accent">Se connecter</button>
+    </form>
+
+    <p class="alt">
+      <a href="#" id="toggle">Créer un compte</a>
+    </p>
+  </main>
+
+  <script type="module">
+    import { auth } from '/js/firebase-init.js';
+    import { isAllowlisted } from '/js/auth-guard.js';
+    import {
+      signInWithEmailAndPassword,
+      createUserWithEmailAndPassword,
+      onAuthStateChanged,
+      signOut,
+    } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js';
+    import { doc, setDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
+    import { db } from '/js/firebase-init.js';
+
+    const form = document.getElementById('form');
+    const errorEl = document.getElementById('error');
+    const noticeEl = document.getElementById('notice');
+    const toggle = document.getElementById('toggle');
+    const submit = document.getElementById('submit');
+    let mode = 'signin';
+
+    const params = new URLSearchParams(location.search);
+    if (params.get('error') === 'not_allowlisted') {
+      showError("Votre compte n'est pas autorisé sur ce site. Demandez à Nicolas d'ajouter votre adresse e-mail.");
+    }
+
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) return;
+      if (await isAllowlisted(user.email)) {
+        const next = params.get('next') || '/';
+        location.replace(next);
+      } else {
+        await signOut(auth);
+        showError("Cette adresse n'est pas autorisée. Demandez à Nicolas de l'ajouter.");
+        submit.disabled = false;
+      }
+    });
+
+    toggle.addEventListener('click', (e) => {
+      e.preventDefault();
+      mode = mode === 'signin' ? 'signup' : 'signin';
+      submit.textContent = mode === 'signin' ? 'Se connecter' : 'Créer le compte';
+      toggle.textContent = mode === 'signin' ? 'Créer un compte' : 'Déjà inscrit ? Se connecter';
+      clearError();
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      clearError();
+      submit.disabled = true;
+      const email = document.getElementById('email').value.trim().toLowerCase();
+      const password = document.getElementById('password').value;
+
+      try {
+        if (mode === 'signin') {
+          await signInWithEmailAndPassword(auth, email, password);
+        } else {
+          const cred = await createUserWithEmailAndPassword(auth, email, password);
+          if (!(await isAllowlisted(email))) {
+            await signOut(auth);
+            throw new Error("Cette adresse n'est pas autorisée. Demandez à Nicolas de l'ajouter.");
+          }
+          await setDoc(doc(db, 'users', cred.user.uid), {
+            email,
+            displayName: email.split('@')[0],
+            createdAt: serverTimestamp(),
+          }, { merge: true });
+        }
+        // onAuthStateChanged above handles the redirect (or sign-out if not allowlisted).
+      } catch (err) {
+        showError(err.message || String(err));
+        submit.disabled = false;
+      }
+    });
+
+    function showError(msg) {
+      errorEl.textContent = msg;
+      errorEl.hidden = false;
+    }
+    function clearError() {
+      errorEl.hidden = true;
+      errorEl.textContent = '';
+    }
+  </script>
+</body>
+</html>

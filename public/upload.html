@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prochaine compil — Compilator</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <nav class="topbar">
+    <a class="brand" href="/">Compilator</a>
+    <div class="nav-links">
+      <a href="/upload.html">Prochaine compil</a>
+      <a href="/migrate.html" data-admin-only>Import</a>
+      <a href="/profile.html">Profil</a>
+      <a href="#" id="logout">Déconnexion</a>
+    </div>
+  </nav>
+
+  <main class="shell-narrow">
+    <p class="eyebrow">Prochaine compil — <span id="nextLabel"></span></p>
+    <h1>Fais ton disque.</h1>
+
+    <div id="error" class="error" hidden></div>
+
+    <section class="section">
+      <h3>Détails</h3>
+      <div class="field-row">
+        <div>
+          <label for="title">Titre</label>
+          <input id="title" placeholder="ex. Christmousse" required>
+        </div>
+        <div>
+          <label for="author">Auteur (remplacer)</label>
+          <input id="author" placeholder="par défaut votre nom d'affichage">
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h3>Pochette</h3>
+      <p class="notice">Optionnel — sans pochette, l'image embarquée dans la balise ID3 du premier morceau sera utilisée si elle existe.</p>
+      <div id="coverDrop" class="dropzone">
+        <div class="big">Déposez une image de pochette</div>
+        <div>ou cliquez pour choisir (jpg / png)</div>
+        <input type="file" id="coverInput" accept="image/*" hidden>
+      </div>
+      <div id="coverPreview" style="margin-top:16px;display:none;">
+        <img id="coverImg" style="max-width:200px;border-radius:8px;box-shadow:var(--shadow);">
+      </div>
+    </section>
+
+    <section class="section">
+      <h3>Morceaux <span id="totalDur" class="eyebrow" style="float:right"></span></h3>
+      <div id="songsDrop" class="dropzone">
+        <div class="big">Déposez les MP3 ici, dans n'importe quel ordre</div>
+        <div>ou cliquez pour choisir. Glissez les lignes pour réordonner avant l'envoi.</div>
+        <input type="file" id="songsInput" accept="audio/mpeg,.mp3" multiple hidden>
+      </div>
+      <ul id="queue" class="queue" style="margin-top:24px;"></ul>
+    </section>
+
+    <div style="display:flex;gap:12px;justify-content:flex-end;margin-top:32px;">
+      <button id="reset" class="btn-ghost">Réinitialiser</button>
+      <button id="publish" class="btn-accent" disabled>Publier la compilation</button>
+    </div>
+  </main>
+
+  <script type="module">
+    import { auth, db } from '/js/firebase-init.js';
+    import { requireAuth, logout } from '/js/auth-guard.js';
+    import { uploadSong, uploadCover, runWithConcurrency } from '/js/upload-pipeline.js';
+    import { addDoc, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
+    import { parseBlob } from 'https://cdn.jsdelivr.net/npm/music-metadata-browser@2.5.10/+esm';
+
+    document.getElementById('logout').addEventListener('click', (e) => { e.preventDefault(); logout(); });
+
+    const user = await requireAuth();
+    const userDoc = await getDoc(doc(db, 'users', user.uid));
+    const myDisplayName = userDoc.exists() ? (userDoc.data().displayName || user.email) : user.email;
+    document.getElementById('author').placeholder = `par défaut « ${myDisplayName} »`;
+
+    const { nextCompilationSlot, slotLabel, deadlineLabel } = await import('/js/slot.js');
+    const slot = nextCompilationSlot();
+    document.getElementById('nextLabel').textContent = `${slotLabel(slot)} · à rendre avant le ${deadlineLabel(slot)}`;
+
+    // ---- Cover picker ----
+    const coverDrop = document.getElementById('coverDrop');
+    const coverInput = document.getElementById('coverInput');
+    let coverFile = null;
+    coverDrop.addEventListener('click', () => coverInput.click());
+    coverDrop.addEventListener('dragover', (e) => { e.preventDefault(); coverDrop.classList.add('over'); });
+    coverDrop.addEventListener('dragleave', () => coverDrop.classList.remove('over'));
+    coverDrop.addEventListener('drop', (e) => {
+      e.preventDefault();
+      coverDrop.classList.remove('over');
+      const f = e.dataTransfer.files[0];
+      if (f && f.type.startsWith('image/')) handleCover(f);
+    });
+    coverInput.addEventListener('change', () => handleCover(coverInput.files[0]));
+    function handleCover(f) {
+      coverFile = f;
+      const url = URL.createObjectURL(f);
+      document.getElementById('coverImg').src = url;
+      document.getElementById('coverPreview').style.display = 'block';
+    }
+
+    // ---- Songs picker ----
+    const songsDrop = document.getElementById('songsDrop');
+    const songsInput = document.getElementById('songsInput');
+    const queue = document.getElementById('queue');
+    const totalDurEl = document.getElementById('totalDur');
+    const items = [];
+
+    songsDrop.addEventListener('click', () => songsInput.click());
+    songsDrop.addEventListener('dragover', (e) => { e.preventDefault(); songsDrop.classList.add('over'); });
+    songsDrop.addEventListener('dragleave', () => songsDrop.classList.remove('over'));
+    songsDrop.addEventListener('drop', (e) => { e.preventDefault(); songsDrop.classList.remove('over'); addFiles([...e.dataTransfer.files]); });
+    songsInput.addEventListener('change', () => addFiles([...songsInput.files]));
+
+    async function addFiles(files) {
+      const mp3s = files.filter(f => f.type === 'audio/mpeg' || f.name.toLowerCase().endsWith('.mp3'));
+      for (const file of mp3s) {
+        const item = { file, status: 'pending', progress: 0, title: file.name, artist: '', duration: 0 };
+        items.push(item);
+        renderQueue();
+        try {
+          const meta = await parseBlob(file, { duration: true });
+          item.title = meta.common.title || file.name;
+          item.artist = meta.common.artist || '';
+          item.duration = meta.format.duration || 0;
+        } catch (e) { /* ignore parse errors */ }
+        renderQueue();
+      }
+      updatePublishState();
+    }
+
+    function fmtDur(s) {
+      if (!s || !isFinite(s)) return '';
+      const m = Math.floor(s / 60); const r = Math.round(s % 60);
+      return `${m}:${r.toString().padStart(2, '0')}`;
+    }
+
+    const STATUS_LABEL = { pending: 'en attente', uploading: 'envoi…', done: 'ok', error: 'erreur', dup: 'doublon' };
+    function renderQueue() {
+      queue.innerHTML = '';
+      items.forEach((it, i) => {
+        const li = document.createElement('li');
+        li.draggable = true;
+        li.dataset.idx = i;
+        li.innerHTML = `
+          <span class="grip">⋮⋮</span>
+          <div>
+            <div>${escape(it.title)}</div>
+            <div style="color:var(--ink-dim);font-size:12px;font-style:italic">${escape(it.artist)} · ${fmtDur(it.duration)}</div>
+          </div>
+          <div class="progress"><span style="width:${(it.progress * 100).toFixed(0)}%"></span></div>
+          <div class="status ${it.status === 'done' ? 'ok' : it.status === 'error' ? 'err' : it.status === 'dup' ? 'dup' : ''}">${STATUS_LABEL[it.status] || it.status}</div>
+        `;
+        li.addEventListener('dragstart', (e) => { li.classList.add('dragging'); e.dataTransfer.setData('text/plain', i); });
+        li.addEventListener('dragend', () => li.classList.remove('dragging'));
+        li.addEventListener('dragover', (e) => e.preventDefault());
+        li.addEventListener('drop', (e) => {
+          e.preventDefault();
+          const from = +e.dataTransfer.getData('text/plain');
+          const to = +li.dataset.idx;
+          if (from === to) return;
+          const moved = items.splice(from, 1)[0];
+          items.splice(to, 0, moved);
+          renderQueue();
+        });
+        queue.appendChild(li);
+      });
+      const total = items.reduce((acc, it) => acc + (it.duration || 0), 0);
+      const tot = fmtDur(total);
+      totalDurEl.textContent = total ? `${tot} au total${total > 80 * 60 ? ' — plus de 80 min !' : ''}` : '';
+      totalDurEl.style.color = total > 80 * 60 ? 'var(--accent)' : 'var(--ink-faint)';
+    }
+    function escape(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function updatePublishState() {
+      document.getElementById('publish').disabled = items.length === 0 || !document.getElementById('title').value.trim();
+    }
+    document.getElementById('title').addEventListener('input', updatePublishState);
+
+    document.getElementById('reset').addEventListener('click', () => {
+      items.length = 0;
+      coverFile = null;
+      document.getElementById('coverPreview').style.display = 'none';
+      document.getElementById('title').value = '';
+      renderQueue();
+      updatePublishState();
+    });
+
+    // ---- Publish ----
+    document.getElementById('publish').addEventListener('click', async () => {
+      const errEl = document.getElementById('error');
+      errEl.hidden = true;
+      const title = document.getElementById('title').value.trim();
+      const { season, year } = slot;
+      const authorOverride = document.getElementById('author').value.trim();
+      const authorName = authorOverride || myDisplayName;
+
+      const btn = document.getElementById('publish');
+      btn.disabled = true; btn.textContent = 'Publication…';
+      try {
+        const compRef = await addDoc(collection(db, 'compilations'), {
+          title, season, year,
+          authorUid: user.uid,
+          authorName,
+          coverPath: null,
+          coverSource: null,
+          status: 'draft',
+          trackCount: 0,
+          totalDuration: 0,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+
+        // Upload cover (sequential, before songs, so ID3 fallback can know it's set).
+        if (coverFile) {
+          await uploadCover({ file: coverFile, compilationId: compRef.id });
+        }
+
+        // Upload songs in parallel with concurrency cap = 3.
+        const tasks = items.map((it, idx) => async () => {
+          it.status = 'uploading';
+          renderQueue();
+          try {
+            const result = await uploadSong({
+              file: it.file,
+              compilationId: compRef.id,
+              order: idx,
+              onProgress: (p) => { it.progress = p; renderQueue(); },
+            });
+            it.progress = 1;
+            it.status = result.dedupHit ? 'dup' : 'done';
+            renderQueue();
+            return result;
+          } catch (err) {
+            it.status = 'error';
+            it.error = err.message;
+            renderQueue();
+            throw err;
+          }
+        });
+        const results = await runWithConcurrency(tasks, 3);
+        const failures = results.filter((r) => !r.ok);
+        if (failures.length === 0) {
+          await updateDoc(compRef, { status: 'published' });
+          location.assign(`/compilation.html?id=${compRef.id}`);
+        } else {
+          throw new Error(`${failures.length} morceau(x) n'ont pas pu être envoyés. Corrige et republie.`);
+        }
+      } catch (err) {
+        errEl.textContent = err.message || String(err);
+        errEl.hidden = false;
+        btn.disabled = false;
+        btn.textContent = 'Publier la compilation';
+      }
+    });
+  </script>
+</body>
+</html>

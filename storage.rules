@@ -1,0 +1,30 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Staging area: each user can write only under their own /uploads/{uid}/ folder.
+    // The processSong / uploadCover callables move files out of here and delete the staging blob.
+    match /uploads/{uid}/{allPaths=**} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if request.auth != null
+                   && request.auth.uid == uid
+                   && request.resource.size < 80 * 1024 * 1024;
+    }
+
+    // Canonical song store: read for any signed-in user; only Functions (Admin SDK) writes.
+    match /store/{prefix}/{file} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // Compilation covers: read for any signed-in user; only Functions writes.
+    match /covers/{file} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,1 +1,6 @@
 node_modules
+emulator-data/
+test/fixtures/
+screenshots/
+*.log
+.DS_Store
