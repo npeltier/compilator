@@ -269,13 +269,33 @@ h3 { font-size: 24px; letter-spacing: 0.04em; }
   flex-direction: column;
   border: none;
   background: transparent;
-  cursor: pointer;
   text-align: left;
   padding: 0;
   color: var(--ink);
+}
+.cover-card a {
+  border: none;
+  color: inherit;
+}
+.cover-card .cover-card-art {
+  display: block;
   transition: transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
-.cover-card:hover { transform: translateY(-4px); background: transparent; }
+.cover-card .cover-card-art:hover { transform: translateY(-4px); }
+.cover-card .cover-card-author {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink-dim);
+  font-style: italic;
+  margin-top: 4px;
+  border: none;
+  width: max-content;
+  max-width: 100%;
+  padding: 2px 0;
+}
+.cover-card .cover-card-author:hover { color: var(--accent-soft); }
 .cover-card .art {
   aspect-ratio: 1;
   background: var(--bg-elev);
@@ -755,3 +775,61 @@ body.has-player { padding-bottom: 100px; }
   .player-bar .pb-right { justify-content: flex-start; }
   body.has-player { padding-bottom: 160px; }
 }
+
+/* -------- avatars -------- */
+.avatar {
+  display: inline-block;
+  background: var(--bg-elev) center/cover no-repeat;
+  border-radius: 50%;
+  flex-shrink: 0;
+  vertical-align: middle;
+  text-align: center;
+  font-family: var(--display);
+  color: var(--ink-faint);
+  line-height: 1;
+}
+.avatar.placeholder {
+  background: linear-gradient(135deg, var(--bg-elev) 0%, var(--bg-elev-2) 100%);
+}
+.avatar-xs { width: 18px; height: 18px; font-size: 10px; line-height: 18px; }
+.avatar-sm { width: 24px; height: 24px; font-size: 12px; line-height: 24px; }
+.avatar-md { width: 48px; height: 48px; font-size: 22px; line-height: 48px; }
+.avatar-lg { width: 120px; height: 120px; font-size: 56px; line-height: 120px; }
+.avatar-xl {
+  width: 160px; height: 160px;
+  font-size: 72px; line-height: 160px;
+  box-shadow: var(--shadow);
+}
+
+/* -------- compilation hero "par X" link -------- */
+.detail-hero .by .by-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+}
+.detail-hero .by .by-link:hover { color: var(--accent-soft); }
+
+/* -------- profile-hero (author / profile pages) -------- */
+.profile-hero {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  margin-bottom: 48px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--line);
+}
+.profile-hero h1 { margin: 4px 0; font-size: 56px; line-height: 1.05; }
+.profile-hero .profile-stats {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+@media (max-width: 720px) {
+  .profile-hero { flex-direction: column; align-items: flex-start; gap: 16px; }
+  .avatar-xl { width: 100px; height: 100px; font-size: 44px; line-height: 100px; }
+  .profile-hero h1 { font-size: 40px; }
+}
+

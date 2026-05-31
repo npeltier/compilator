@@ -42,7 +42,7 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.auth.uid == uid;
       allow update: if isSignedIn() && request.auth.uid == uid
                     && request.resource.data.diff(resource.data).affectedKeys()
-                       .hasOnly(['displayName', 'updatedAt']);
+                       .hasOnly(['displayName', 'avatarPath', 'updatedAt']);
       allow delete: if false;
 
       // Per-user reactions (❤️ like / 💩 dislike) on songs. Only the owning user

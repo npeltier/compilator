@@ -1,6 +1,6 @@
-// Profile view: edit displayName + browse own ❤️ likes.
+// Profile view: edit displayName + avatar + password, browse own ❤️ likes.
 
-import { auth, db } from '../firebase-init.js';
+import { auth, db, storage } from '../firebase-init.js';
 import {
   EmailAuthProvider,
   reauthenticateWithCredential,
@@ -13,17 +13,47 @@ import {
   serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
 import {
+  ref as storageRef,
+  uploadBytes,
+} from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js';
+import {
   likedSongIds,
   onChange as onReactionChange,
   toggleLike,
 } from '../reactions.js';
-import { getPlacement, trackFromSongId } from '../catalog.js';
+import { getPlacement, trackFromSongId, updateUserLocal } from '../catalog.js';
 import { playQueue } from '../player.js';
+import { avatarUrl, invalidateAvatar } from '../avatar.js';
 
 function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
+}
+
+// Center-crop to square then scale to `size` × `size` JPEG; keeps avatars under
+// ~30-40 KB which is sane for friends-and-family scale.
+async function resizeToJpegBlob(file, size = 256, quality = 0.85) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = rej;
+      i.src = url;
+    });
+    const minDim = Math.min(img.width, img.height);
+    const sx = (img.width - minDim) / 2;
+    const sy = (img.height - minDim) / 2;
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    canvas.getContext('2d').drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size);
+    return new Promise((res, rej) => {
+      canvas.toBlob((blob) => blob ? res(blob) : rej(new Error('toBlob failed')), 'image/jpeg', quality);
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 export async function mount(el) {
@@ -35,6 +65,16 @@ export async function mount(el) {
 
       <div id="error" class="error" hidden></div>
       <div id="ok" class="notice" hidden>Enregistré.</div>
+
+      <div class="avatar-row" style="display:flex;align-items:center;gap:20px;margin-bottom:24px;">
+        <div class="avatar avatar-lg placeholder" id="avatarPreview"></div>
+        <div>
+          <button type="button" class="btn-ghost" id="avatarPick">Changer l'avatar</button>
+          <input type="file" id="avatarInput" accept="image/*" hidden>
+          <p style="color:var(--ink-faint);font-size:12px;margin:8px 0 0;">Recadré et redimensionné en 256×256 avant envoi.</p>
+          <div id="avatarStatus" style="font-size:12px;color:var(--ink-dim);margin-top:4px;"></div>
+        </div>
+      </div>
 
       <form id="form">
         <label for="email">Adresse e-mail</label>
@@ -85,6 +125,54 @@ export async function mount(el) {
   el.querySelector('#email').value = user.email;
   el.querySelector('#displayName').value = data.displayName || user.email.split('@')[0];
 
+  // ---- Avatar ----
+  const avatarPreview = el.querySelector('#avatarPreview');
+  const avatarInput = el.querySelector('#avatarInput');
+  const avatarStatus = el.querySelector('#avatarStatus');
+  async function paintAvatarPreview(path) {
+    if (!path) {
+      avatarPreview.classList.add('placeholder');
+      avatarPreview.style.backgroundImage = '';
+      avatarPreview.textContent = (el.querySelector('#displayName').value || '?')[0].toUpperCase();
+      return;
+    }
+    avatarPreview.classList.remove('placeholder');
+    avatarPreview.textContent = '';
+    const url = await avatarUrl(path);
+    if (url) avatarPreview.style.backgroundImage = `url(${url})`;
+  }
+  paintAvatarPreview(data.avatarPath || null);
+
+  el.querySelector('#avatarPick').addEventListener('click', () => avatarInput.click());
+  avatarInput.addEventListener('change', async () => {
+    const file = avatarInput.files?.[0];
+    avatarInput.value = '';
+    if (!file) return;
+    avatarStatus.textContent = 'Traitement…';
+    try {
+      const blob = await resizeToJpegBlob(file);
+      avatarStatus.textContent = 'Envoi…';
+      const path = `avatars/${user.uid}.jpg`;
+      invalidateAvatar(path);
+      await uploadBytes(storageRef(storage, path), blob, { contentType: 'image/jpeg' });
+      await setDoc(userDocRef, { avatarPath: path, updatedAt: serverTimestamp() }, { merge: true });
+      updateUserLocal(user.uid, { avatarPath: path });
+      avatarStatus.textContent = 'Avatar mis à jour.';
+      // Force a fresh fetch since the URL token changed.
+      const url = await avatarUrl(path);
+      if (url) {
+        // Cache-bust by appending a hash to the URL — needed because uploadBytes
+        // doesn't always rotate the download token in the emulator.
+        avatarPreview.style.backgroundImage = `url(${url}#${Date.now()})`;
+        avatarPreview.classList.remove('placeholder');
+        avatarPreview.textContent = '';
+      }
+    } catch (err) {
+      console.error('avatar upload', err);
+      avatarStatus.textContent = `Échec : ${err.message || err}`;
+    }
+  });
+
   el.querySelector('#form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const errEl = el.querySelector('#error');
@@ -94,6 +182,7 @@ export async function mount(el) {
     if (!displayName) return;
     try {
       await setDoc(userDocRef, { displayName, updatedAt: serverTimestamp() }, { merge: true });
+      updateUserLocal(user.uid, { displayName });
       okEl.hidden = false;
     } catch (err) {
       errEl.textContent = err.message; errEl.hidden = false;

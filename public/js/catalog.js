@@ -26,16 +26,27 @@ import {
 const songsById = new Map();
 const compilationsById = new Map();
 const placementBySongId = new Map();
+const usersByUid = new Map();
+const usersByDisplayName = new Map(); // lowercased displayName → user doc
 let loaded = false;
 
 export async function loadCatalog() {
   if (loaded) return;
 
-  const [songsSnap, compsSnap, tracksSnap] = await Promise.all([
+  const [songsSnap, compsSnap, tracksSnap, usersSnap] = await Promise.all([
     getDocs(collection(db, 'songs')),
     getDocs(query(collection(db, 'compilations'), orderBy('createdAt', 'asc'))),
     getDocs(collectionGroup(db, 'tracks')),
+    getDocs(collection(db, 'users')),
   ]);
+
+  usersByUid.clear();
+  usersByDisplayName.clear();
+  usersSnap.forEach((d) => {
+    const u = { uid: d.id, ...d.data() };
+    usersByUid.set(d.id, u);
+    if (u.displayName) usersByDisplayName.set(u.displayName.toLowerCase(), u);
+  });
 
   songsById.clear();
   songsSnap.forEach((d) => songsById.set(d.id, { id: d.id, ...d.data() }));
@@ -74,6 +85,24 @@ export function allSongs() { return [...songsById.values()]; }
 export function getCompilation(id) { return compilationsById.get(id); }
 export function allCompilations() { return [...compilationsById.values()]; }
 export function getPlacement(songId) { return placementBySongId.get(songId) || null; }
+export function getUser(uid) { return usersByUid.get(uid) || null; }
+export function getUserByDisplayName(name) {
+  return name ? usersByDisplayName.get(name.toLowerCase()) || null : null;
+}
+
+// Mutate a user record after the boot fetch — used after the current user
+// updates their own profile (displayName / avatar) so the rest of the SPA
+// sees the change without a reload.
+export function updateUserLocal(uid, patch) {
+  const u = usersByUid.get(uid) || { uid };
+  const oldName = u.displayName;
+  Object.assign(u, patch);
+  usersByUid.set(uid, u);
+  if (oldName && oldName !== u.displayName) {
+    usersByDisplayName.delete(oldName.toLowerCase());
+  }
+  if (u.displayName) usersByDisplayName.set(u.displayName.toLowerCase(), u);
+}
 
 // Build a Track (the shape used by the player queue) from a songId.
 // Returns null if the song isn't in the catalog (defensive — shouldn't happen).

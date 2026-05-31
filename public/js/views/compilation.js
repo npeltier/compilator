@@ -29,6 +29,7 @@ import {
 import { getCompilation, getSong } from '../catalog.js';
 import { isAdminSync } from '../auth-guard.js';
 import { replaceSongBinary } from '../upload-pipeline.js';
+import { avatarHTML, paintAvatars } from '../avatar.js';
 
 function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -113,7 +114,7 @@ export async function mount(el, { params }) {
         <div class="meta">
           <p class="eyebrow">${comp.season === 'noel' ? '❄ Noël' : '☀ Été'} ${comp.year || ''}</p>
           <h1>${escape(liveCompTitle)}</h1>
-          <div class="by">par <a href="/author/${encodeURIComponent(comp.authorName)}">${escape(comp.authorName)}</a></div>
+          <div class="by">par <a class="by-link" href="/author/${encodeURIComponent(comp.authorName)}">${avatarHTML(comp.authorName, { size: 'sm' })}<span>${escape(comp.authorName)}</span></a></div>
           <div class="stats">${tracks.length} morceau${tracks.length > 1 ? 'x' : ''} · ${fmt(totalDur)}</div>
           <div class="actions">
             <button class="btn-accent" id="playAll">▶ Tout écouter</button>
@@ -124,6 +125,7 @@ export async function mount(el, { params }) {
       <ol class="tracklist" id="tracks"></ol>
     `;
     paintHeroCover();
+    paintAvatars(main);
 
     const tracksEl = main.querySelector('#tracks');
     tracks.forEach((t, i) => {

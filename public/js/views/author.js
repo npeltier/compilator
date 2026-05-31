@@ -1,8 +1,225 @@
-// Author view: home grid filtered to a single author. Reuses home.js logic by
-// delegating with a synthetic query context.
+// Author profile view at /author/:name.
+//
+// Renders the public profile for any author name: their avatar + displayName,
+// their compilations grouped by year+season, and the viewer's own ❤️ / 💩
+// reactions on tracks belonging to those compilations. Same shape whether
+// you're looking at yourself or another user.
+//
+// Author identity is the displayName string — that's what links legacy
+// (account-less) imports to current users. If a /users doc with a matching
+// displayName exists, we surface its avatar; otherwise we render a placeholder.
 
-import { mount as mountHome } from './home.js';
+import { db, storage } from '../firebase-init.js';
+import {
+  collection,
+  getDocs,
+} from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
+import {
+  ref as storageRef,
+  getDownloadURL,
+} from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js';
+import {
+  allCompilations,
+  getUserByDisplayName,
+  trackFromSongId,
+} from '../catalog.js';
+import {
+  dislikedSongIds,
+  likedSongIds,
+  onChange as onReactionChange,
+  toggleDislike,
+  toggleLike,
+} from '../reactions.js';
+import { playQueue } from '../player.js';
+import { avatarUrl } from '../avatar.js';
+
+function escape(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+function fmt(s) {
+  return isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}` : '';
+}
 
 export async function mount(el, { params }) {
-  return mountHome(el, { params: {}, query: { author: params.name } });
+  const name = params.name;
+  const userDoc = getUserByDisplayName(name);
+  const comps = allCompilations()
+    .filter((c) => c.authorName === name)
+    .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+
+  el.innerHTML = `
+    <div class="shell">
+      <header class="profile-hero">
+        <div class="avatar avatar-xl ${userDoc?.avatarPath ? '' : 'placeholder'}" id="profileAvatar">
+          ${userDoc?.avatarPath ? '' : escape((name || '?')[0].toUpperCase())}
+        </div>
+        <div>
+          <p class="eyebrow">Profil</p>
+          <h1>${escape(name)}</h1>
+          <div class="profile-stats" id="profileStats"></div>
+        </div>
+      </header>
+
+      <section class="section">
+        <h3>Compilations <span id="compCount" class="eyebrow" style="float:right"></span></h3>
+        <div id="empty" class="notice" hidden>Aucune compilation pour cet auteur.</div>
+        <div id="years"></div>
+      </section>
+
+      <section class="section">
+        <h3>Mes réactions sur ses morceaux <span id="rxCount" class="eyebrow" style="float:right"></span></h3>
+        <p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 16px;">
+          Tes ❤️ et 💩 sur les morceaux issus de ses compilations.
+        </p>
+        <ul id="rxList" class="likes-list"></ul>
+        <div id="rxEmpty" class="notice" hidden>Aucune réaction sur ses morceaux pour l'instant.</div>
+      </section>
+    </div>
+  `;
+
+  // ---- Avatar header ----
+  if (userDoc?.avatarPath) {
+    const url = await avatarUrl(userDoc.avatarPath);
+    if (url) el.querySelector('#profileAvatar').style.backgroundImage = `url(${url})`;
+  }
+
+  // ---- Fetch all tracks of this author's compilations so we can resolve
+  // viewer reactions. The catalog has compilations but not per-comp tracks; we
+  // need the actual track-row ↔ songId mapping to know which songs belong here.
+  const tracklists = await Promise.all(
+    comps.map((c) => getDocs(collection(db, 'compilations', c.id, 'tracks'))),
+  );
+  const songIdSet = new Set();
+  const songToComp = new Map(); // songId → { compId, compTitle, coverPath }
+  tracklists.forEach((snap, i) => {
+    const c = comps[i];
+    snap.forEach((d) => {
+      const t = d.data();
+      if (!t.songId) return;
+      if (!songIdSet.has(t.songId)) {
+        songIdSet.add(t.songId);
+        songToComp.set(t.songId, { compId: c.id, compTitle: c.title, coverPath: c.coverPath });
+      }
+    });
+  });
+
+  // ---- Profile stats ----
+  const totalTracks = [...tracklists].reduce((a, s) => a + s.size, 0);
+  el.querySelector('#profileStats').textContent =
+    `${comps.length} compilation${comps.length > 1 ? 's' : ''} · ${totalTracks} morceau${totalTracks > 1 ? 'x' : ''}`;
+
+  // ---- Compilations grid ----
+  el.querySelector('#compCount').textContent = comps.length
+    ? `${comps.length} ${comps.length > 1 ? 'titres' : 'titre'}`
+    : '';
+  el.querySelector('#empty').hidden = comps.length > 0;
+  renderCompilationsGrid(el.querySelector('#years'), comps);
+
+  // ---- Reactions list ----
+  function renderReactions() {
+    const rxList = el.querySelector('#rxList');
+    const rxEmpty = el.querySelector('#rxEmpty');
+    const rxCount = el.querySelector('#rxCount');
+    const likes = likedSongIds().filter((id) => songIdSet.has(id));
+    const dislikes = dislikedSongIds().filter((id) => songIdSet.has(id));
+    const all = [
+      ...likes.map((songId) => ({ songId, kind: 'like' })),
+      ...dislikes.map((songId) => ({ songId, kind: 'dislike' })),
+    ];
+    rxList.innerHTML = '';
+    rxCount.textContent = all.length ? `${all.length}` : '';
+    rxEmpty.hidden = all.length > 0;
+
+    const playableLikes = likes.map((id) => trackFromSongId(id)).filter(Boolean);
+
+    all.forEach((entry) => {
+      const t = trackFromSongId(entry.songId);
+      if (!t) return;
+      const placement = songToComp.get(entry.songId);
+      const isLike = entry.kind === 'like';
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <button class="lk-play" title="Jouer ce morceau">▶</button>
+        <div class="lk-meta">
+          <div class="title">${escape(t.title)}</div>
+          <div class="artist">${escape(t.artist)} ${placement ? `· <a href="/c/${placement.compId}">${escape(placement.compTitle)}</a>` : ''}</div>
+        </div>
+        <button class="lk-rx" title="${isLike ? 'Retirer le ❤️' : 'Retirer le 💩'}" aria-label="Retirer">${isLike ? '❤️' : '💩'}</button>
+      `;
+      li.querySelector('.lk-play').addEventListener('click', () => {
+        if (isLike && playableLikes.length > 0) {
+          const idx = playableLikes.findIndex((p) => p.songId === entry.songId);
+          playQueue(playableLikes, { startIndex: Math.max(0, idx), sourceLabel: `❤️ chez ${name}` });
+        } else {
+          playQueue([t], { startIndex: 0, sourceLabel: `Chez ${name}` });
+        }
+      });
+      li.querySelector('.lk-rx').addEventListener('click', async () => {
+        if (isLike) await toggleLike(entry.songId);
+        else await toggleDislike(entry.songId);
+      });
+      rxList.appendChild(li);
+    });
+  }
+  renderReactions();
+  const unsub = onReactionChange(renderReactions);
+
+  return () => unsub();
+}
+
+function renderCompilationsGrid(yearsEl, comps) {
+  const byYear = new Map();
+  for (const c of comps) {
+    const y = c.year || new Date(c.createdAt?.toMillis?.() || Date.now()).getFullYear();
+    if (!byYear.has(y)) byYear.set(y, []);
+    byYear.get(y).push(c);
+  }
+  const yearsSorted = [...byYear.keys()].sort((a, b) => b - a);
+  const seasonLabel = { ete: 'Été', noel: 'Noël' };
+
+  for (const y of yearsSorted) {
+    const groups = byYear.get(y);
+    const winter = groups.filter((c) => c.season === 'noel');
+    const summer = groups.filter((c) => c.season === 'ete');
+    const other = groups.filter((c) => c.season !== 'ete' && c.season !== 'noel');
+    for (const [seasonKey, list] of [['noel', winter], ['ete', summer], ['other', other]]) {
+      if (list.length === 0) continue;
+      const block = document.createElement('section');
+      block.className = `season-block ${seasonKey === 'noel' ? 'winter' : seasonKey === 'ete' ? 'summer' : ''}`;
+      const labelTxt = `${seasonLabel[seasonKey] || ''} ${y}`;
+      block.innerHTML = `
+        <header>
+          <h2>${labelTxt}</h2>
+          <span class="count">${list.length} compilation${list.length > 1 ? 's' : ''}</span>
+        </header>
+        <div class="cover-grid"></div>
+      `;
+      const grid = block.querySelector('.cover-grid');
+      for (const c of list) {
+        const card = document.createElement('a');
+        card.className = 'cover-card';
+        card.href = `/c/${c.id}`;
+        const firstChar = (c.title || '?')[0].toUpperCase();
+        card.innerHTML = `
+          <div class="art ${c.coverPath ? '' : 'placeholder'}">${c.coverPath ? '' : firstChar}</div>
+          <div class="title">${escapeStr(c.title)}</div>
+        `;
+        grid.appendChild(card);
+        if (c.coverPath) {
+          getDownloadURL(storageRef(storage, c.coverPath))
+            .then((url) => { card.querySelector('.art').style.backgroundImage = `url(${url})`; })
+            .catch(() => {});
+        }
+      }
+      yearsEl.appendChild(block);
+    }
+  }
+}
+
+function escapeStr(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
 }

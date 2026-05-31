@@ -16,6 +16,7 @@ import {
   ref as storageRef,
   getDownloadURL,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js';
+import { avatarHTML, paintAvatars } from '../avatar.js';
 
 function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -159,14 +160,18 @@ export async function mount(el, { query }) {
       }
       const grid = block.querySelector('.cover-grid');
       for (const c of list) {
-        const card = document.createElement('a');
+        const card = document.createElement('div');
         card.className = 'cover-card';
-        card.href = `/c/${c.id}`;
         const firstChar = (c.title || '?')[0].toUpperCase();
         card.innerHTML = `
-          <div class="art ${c.coverPath ? '' : 'placeholder'}">${c.coverPath ? '' : firstChar}</div>
-          <div class="title">${escape(c.title)}</div>
-          <div class="author">${escape(c.authorName || '')}</div>
+          <a class="cover-card-art" href="/c/${c.id}">
+            <div class="art ${c.coverPath ? '' : 'placeholder'}">${c.coverPath ? '' : firstChar}</div>
+            <div class="title">${escape(c.title)}</div>
+          </a>
+          <a class="cover-card-author" href="/author/${encodeURIComponent(c.authorName || '')}">
+            ${avatarHTML(c.authorName, { size: 'xs' })}
+            <span class="author">${escape(c.authorName || '')}</span>
+          </a>
         `;
         grid.appendChild(card);
         if (c.coverPath) {
@@ -178,4 +183,6 @@ export async function mount(el, { query }) {
       yearsEl.appendChild(block);
     }
   }
+
+  paintAvatars(el);
 }
