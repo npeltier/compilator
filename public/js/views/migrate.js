@@ -1,15 +1,13 @@
 // Admin-only bulk import view: drop legacy ZIPs, extract MP3s in the browser
 // and upload them via the same pipeline as the fancy upload page.
 
-import { auth, db } from '../firebase-init.js';
+import { db } from '../firebase-init.js';
 import { requireAdmin } from '../auth-guard.js';
 import { uploadSong, runWithConcurrency } from '../upload-pipeline.js';
-import { allAssignableUsers, getAssignable } from '../catalog.js';
+import { allAuthorOptions } from '../catalog.js';
 import {
   addDoc,
   collection,
-  doc,
-  getDoc,
   serverTimestamp,
   updateDoc,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
@@ -30,11 +28,10 @@ const STATUS_LABEL = { pending: 'en attente', uploading: 'envoi…', done: 'ok',
 export async function mount(el) {
   // Admin-only — bounces non-admins to /.
   const user = await requireAdmin();
-  const myDisplayName = (await getDoc(doc(db, 'users', user.uid))).data()?.displayName || user.email;
-  const myKey = (user.email || '').toLowerCase();
-  const assignableList = allAssignableUsers();
-  const userOptions = (selectedKey) => assignableList
-    .map((u) => `<option value="${escape(u.key)}" ${u.key === selectedKey ? 'selected' : ''}>${escape(u.displayName || u.email || u.key)}${u.linked ? '' : ' (en attente)'}</option>`)
+  const myEmail = user.email.toLowerCase();
+  const authorOptions = allAuthorOptions();
+  const optionsHTML = (selectedEmail) => authorOptions
+    .map((u) => `<option value="${escape(u.email)}" ${u.email === selectedEmail ? 'selected' : ''}>${escape(u.displayName)}${u.linked ? '' : ' (en attente)'}</option>`)
     .join('');
 
   el.innerHTML = `
@@ -66,7 +63,7 @@ export async function mount(el) {
           </div>
           <div>
             <label for="defAuthor">Auteur</label>
-            <select id="defAuthor">${userOptions(myKey)}</select>
+            <select id="defAuthor">${optionsHTML(myEmail)}</select>
           </div>
         </div>
       </section>
@@ -86,16 +83,13 @@ export async function mount(el) {
   const defSeason = el.querySelector('#defSeason');
   const defYear = el.querySelector('#defYear');
   const defAuthor = el.querySelector('#defAuthor');
-  defAuthor.value = myKey;
+  defAuthor.value = myEmail;
   defYear.value = new Date().getFullYear();
   function defaults() {
-    const picked = getAssignable(defAuthor.value);
     return {
       season: defSeason.value,
       year: defYear.value,
-      authorKey: defAuthor.value,
-      authorUid: picked?.uid || '',
-      authorName: picked?.displayName || picked?.email || myDisplayName,
+      author: defAuthor.value,
     };
   }
 
@@ -117,8 +111,7 @@ export async function mount(el) {
       const d = defaults();
       const card = {
         file: f, songs: [], status: 'pending',
-        season: d.season, year: d.year,
-        authorKey: d.authorKey, authorUid: d.authorUid, authorName: d.authorName,
+        season: d.season, year: d.year, author: d.author,
       };
       zips.push(card);
       renderZips();
@@ -181,7 +174,7 @@ export async function mount(el) {
           </div>
           <div>
             <label>Auteur</label>
-            <select data-k="authorKey">${userOptions(c.authorKey)}</select>
+            <select data-k="author">${optionsHTML(c.author)}</select>
           </div>
         </div>
         <ul class="queue">
@@ -202,11 +195,6 @@ export async function mount(el) {
         const evt = cell.tagName === 'SELECT' ? 'change' : 'input';
         cell.addEventListener(evt, () => {
           c[cell.dataset.k] = cell.value;
-          if (cell.dataset.k === 'authorKey') {
-            const picked = getAssignable(cell.value);
-            c.authorUid = picked?.uid || '';
-            c.authorName = picked?.displayName || picked?.email || c.authorName;
-          }
         });
       });
       zipsEl.appendChild(card);
@@ -224,11 +212,9 @@ export async function mount(el) {
           title: c.title || inferFromFilename(c.file.name).title,
           season: c.season || 'ete',
           year: parseInt(c.year, 10) || new Date().getFullYear(),
-          // Empty when admin picked an allowlisted-only entry — the assignee
-          // hasn't signed in yet, so there's no Firebase Auth uid to bind to.
-          // Only admin can save this; rules permit non-self authorUid for admins.
-          authorUid: c.authorUid || '',
-          authorName: c.authorName || myDisplayName,
+          // Author is the lowercased email — may be a user who hasn't signed in
+          // yet (allowlist-only). Rules permit non-self author for admins.
+          author: (c.author || myEmail).toLowerCase(),
           coverPath: null,
           coverSource: null,
           status: 'draft',

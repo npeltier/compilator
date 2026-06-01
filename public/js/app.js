@@ -26,7 +26,7 @@ document.getElementById('who').textContent = user.email;
 // All views read from these caches and assume they're populated.
 await Promise.all([
   loadCatalog(),
-  loadReactions(user.uid),
+  loadReactions(user.email),
   // Allowlist is admin-readable only; non-admins skip the fetch (rules would
   // reject it anyway). Used to populate "assign author" dropdowns with users
   // who haven't signed in yet.

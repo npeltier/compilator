@@ -16,7 +16,8 @@ import {
 
 const processSongFn = httpsCallable(functions, 'processSong');
 const uploadCoverFn = httpsCallable(functions, 'uploadCover');
-const replaceTrackSongFn = httpsCallable(functions, 'replaceTrackSong');
+const replaceSongFn = httpsCallable(functions, 'replaceSong');
+const deleteCompilationFn = httpsCallable(functions, 'deleteCompilation');
 
 function uuid() {
   return crypto.randomUUID ? crypto.randomUUID()
@@ -76,14 +77,13 @@ export async function uploadCover({ file, compilationId, onProgress }) {
 }
 
 /**
- * Replace an existing track's audio binary. Uploads the new file to staging,
- * then calls the replaceTrackSong callable which re-hashes / dedupes and
- * updates the track row's songId + duration. Title/artist overrides on the
- * track are preserved.
+ * Replace an existing song's audio binary. Uploads the new file to staging,
+ * then calls the replaceSong callable which re-hashes the binary and updates
+ * the song row's hash/storagePath/duration. Title/artist are preserved.
  *
- * @returns {Promise<{songId,dedupHit,duration}>}
+ * @returns {Promise<{dedupHit,duration}>}
  */
-export async function replaceSongBinary({ file, compilationId, trackId, onProgress, filename }) {
+export async function replaceSongBinary({ file, compilationId, songId, onProgress, filename }) {
   const user = auth.currentUser;
   if (!user) throw new Error('Non connecté.');
   const id = uuid();
@@ -101,7 +101,19 @@ export async function replaceSongBinary({ file, compilationId, trackId, onProgre
     );
   });
 
-  const { data } = await replaceTrackSongFn({ tempPath, compilationId, trackId });
+  const { data } = await replaceSongFn({ tempPath, compilationId, songId });
+  return data;
+}
+
+/**
+ * Delete a compilation — its doc, its songs subcollection, its cover, and any
+ * /store/ binaries no longer referenced elsewhere. Runs server-side via the
+ * deleteCompilation callable for atomicity.
+ *
+ * @returns {Promise<{songsDeleted, orphansDeleted}>}
+ */
+export async function deleteCompilation(compilationId) {
+  const { data } = await deleteCompilationFn({ compilationId });
   return data;
 }
 

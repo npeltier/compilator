@@ -11,63 +11,41 @@ if (admin.apps.length === 0) {
 }
 
 /**
- * Hash + parse a buffer, dedupe against `/songs`, and either reuse the
- * matching song doc or create a new one (uploading the buffer to /store/).
- * Shared by processSongFromStaging and replaceTrackSongFromStaging.
+ * Hash + parse a buffer, upload the binary to /store/{hash}.mp3 if it isn't
+ * already there. Song *documents* are per-compilation now (no global /songs
+ * collection); only the binary is deduplicated.
  *
- * @returns {Promise<{songId:string, songData:object, dedupHit:boolean, metadata:object}>}
+ * @returns {Promise<{hash:string, storagePath:string, metadata:object, common:object, format:object}>}
  */
-async function resolveSongFromBuffer(buf, uploaderUid) {
-  const db = getFirestore();
+async function resolveBinaryFromBuffer(buf) {
   const bucket = getStorage().bucket();
 
   const hash = await computeMp3Hash(buf);
   const metadata = await parseBuffer(buf, 'audio/mpeg');
-  const { duration } = metadata.format || {};
-  const { album, artist, year, title, track } = metadata.common || {};
-  const trackNo = track && typeof track.no === 'number' ? track.no : null;
+  const storagePath = getStorePath(hash);
 
-  const songsRef = db.collection('songs');
-  const existing = await songsRef.where('hash', '==', hash).limit(1).get();
-
-  if (!existing.empty) {
-    const d = existing.docs[0];
-    return { songId: d.id, songData: d.data(), dedupHit: true, metadata };
+  const file = bucket.file(storagePath);
+  const [exists] = await file.exists();
+  if (!exists) {
+    await file.save(buf, {
+      metadata: { contentType: 'audio/mpeg' },
+      resumable: false,
+    });
   }
 
-  const storagePath = getStorePath(hash);
-  await bucket.file(storagePath).save(buf, {
-    metadata: { contentType: 'audio/mpeg' },
-    resumable: false,
-  });
-
-  const songRef = songsRef.doc();
-  const songData = {
-    hash,
-    storagePath,
-    title: title || null,
-    artist: artist || null,
-    album: album || null,
-    year: year || null,
-    track: trackNo,
-    duration: duration || null,
-    uploaderUid,
-    importDate: FieldValue.serverTimestamp(),
-  };
-  await songRef.set(songData);
-  return { songId: songRef.id, songData, dedupHit: false, metadata };
+  return { hash, storagePath, metadata, dedupHit: exists };
 }
 
 /**
  * Process a song already uploaded to a staging path in Cloud Storage.
- * - Hashes + dedups against /songs.
- * - Creates /compilations/{compilationId}/tracks/{trackId}.
+ * - Resolves the binary in /store/{hash}.mp3 (dedup at the blob level).
+ * - Creates /compilations/{compilationId}/songs/{songId} with album=compilationId.
  * - Fills in the compilation cover from ID3 APIC if it doesn't have one yet.
  * - Deletes the staging blob on success.
  */
-export async function processSongFromStaging({ tempPath, compilationId, order, uploaderUid }) {
-  if (!tempPath || !compilationId || order == null || !uploaderUid) {
-    throw new Error('processSongFromStaging: missing tempPath/compilationId/order/uploaderUid');
+export async function processSongFromStaging({ tempPath, compilationId, order }) {
+  if (!tempPath || !compilationId || order == null) {
+    throw new Error('processSongFromStaging: missing tempPath/compilationId/order');
   }
 
   const bucket = getStorage().bucket();
@@ -76,25 +54,32 @@ export async function processSongFromStaging({ tempPath, compilationId, order, u
   const stagingFile = bucket.file(tempPath);
   const [stagingBuf] = await stagingFile.download();
 
-  const { songId, songData, dedupHit, metadata } = await resolveSongFromBuffer(stagingBuf, uploaderUid);
-  const { picture } = metadata.common || {};
+  const { hash, storagePath, metadata, dedupHit } = await resolveBinaryFromBuffer(stagingBuf);
+  const { duration } = metadata.format || {};
+  const { artist, year, title, track, picture } = metadata.common || {};
+  const trackNo = track && typeof track.no === 'number' ? track.no : null;
 
-  // Append to compilation's tracks subcollection.
+  // Create the per-compilation song doc.
   const compRef = db.collection('compilations').doc(compilationId);
-  const trackRef = compRef.collection('tracks').doc();
-  await trackRef.set({
+  const songRef = compRef.collection('songs').doc();
+  const songData = {
+    hash,
+    storagePath,
+    title: title || null,
+    artist: artist || null,
+    album: compilationId,
+    year: year || null,
+    track: trackNo,
+    duration: duration || null,
     order,
-    songId,
-    title: songData.title || null,
-    artist: songData.artist || null,
-    duration: songData.duration || null,
     addedAt: FieldValue.serverTimestamp(),
-  });
+  };
+  await songRef.set(songData);
 
   // Refresh denormalized counters on the compilation.
   await compRef.set({
     trackCount: FieldValue.increment(1),
-    totalDuration: FieldValue.increment(songData.duration || 0),
+    totalDuration: FieldValue.increment(duration || 0),
     updatedAt: FieldValue.serverTimestamp(),
   }, { merge: true });
 
@@ -124,8 +109,7 @@ export async function processSongFromStaging({ tempPath, compilationId, order, u
   try { await stagingFile.delete(); } catch (e) { /* ignore */ }
 
   return {
-    songId,
-    trackId: trackRef.id,
+    songId: songRef.id,
     dedupHit,
     title: songData.title,
     artist: songData.artist,
@@ -137,8 +121,8 @@ export async function processSongFromStaging({ tempPath, compilationId, order, u
 /**
  * Move a staged cover image to /covers/{compilationId}.{ext} and update the compilation.
  */
-export async function uploadCoverFromStaging({ tempPath, compilationId, ext, uploaderUid }) {
-  if (!tempPath || !compilationId || !ext || !uploaderUid) {
+export async function uploadCoverFromStaging({ tempPath, compilationId, ext }) {
+  if (!tempPath || !compilationId || !ext) {
     throw new Error('uploadCoverFromStaging: missing arguments');
   }
   const bucket = getStorage().bucket();
@@ -162,23 +146,16 @@ export async function uploadCoverFromStaging({ tempPath, compilationId, ext, upl
 }
 
 /**
- * Replace the audio binary of an existing track. The track row keeps its order
- * and any user-edited title/artist overrides; only the songId pointer and
- * duration update. Compilation's totalDuration is adjusted by the delta.
+ * Replace the audio binary of an existing song. The song row keeps its order,
+ * title, and artist; only hash + storagePath + duration update. Compilation's
+ * totalDuration is adjusted by the delta.
  *
- * Authorization: the caller must be the compilation's author OR an admin.
- *
- * @param {Object} args
- * @param {string} args.tempPath
- * @param {string} args.compilationId
- * @param {string} args.trackId
- * @param {string} args.uploaderUid
- * @param {string} args.callerEmail - lowercased, used for the admin check
- * @returns {Promise<{songId:string, dedupHit:boolean, duration:number|null}>}
+ * Authorization: the caller must be the compilation's author (email match) OR
+ * an admin.
  */
-export async function replaceTrackSongFromStaging({ tempPath, compilationId, trackId, uploaderUid, callerEmail }) {
-  if (!tempPath || !compilationId || !trackId || !uploaderUid) {
-    throw new Error('replaceTrackSongFromStaging: missing tempPath/compilationId/trackId/uploaderUid');
+export async function replaceSongFromStaging({ tempPath, compilationId, songId, callerEmail }) {
+  if (!tempPath || !compilationId || !songId || !callerEmail) {
+    throw new Error('replaceSongFromStaging: missing tempPath/compilationId/songId/callerEmail');
   }
 
   const bucket = getStorage().bucket();
@@ -190,26 +167,25 @@ export async function replaceTrackSongFromStaging({ tempPath, compilationId, tra
     throw new Error('Compilation not found.');
   }
   const comp = compSnap.data();
-  if (comp.authorUid !== uploaderUid && !(await isAdminEmail(callerEmail))) {
-    throw new Error('Only the compilation author or an admin may replace a track.');
+  if (comp.author !== callerEmail && !(await isAdminEmail(callerEmail))) {
+    throw new Error('Only the compilation author or an admin may replace a song.');
   }
 
-  const trackRef = compRef.collection('tracks').doc(trackId);
-  const trackSnap = await trackRef.get();
-  if (!trackSnap.exists) {
-    throw new Error('Track not found.');
+  const songRef = compRef.collection('songs').doc(songId);
+  const songSnap = await songRef.get();
+  if (!songSnap.exists) {
+    throw new Error('Song not found.');
   }
-  const trackData = trackSnap.data();
-  const oldDuration = trackData.duration || 0;
+  const oldDuration = songSnap.data().duration || 0;
 
   const stagingFile = bucket.file(tempPath);
   const [stagingBuf] = await stagingFile.download();
-  const { songId, songData, dedupHit } = await resolveSongFromBuffer(stagingBuf, uploaderUid);
-  const newDuration = songData.duration || 0;
+  const { hash, storagePath, metadata, dedupHit } = await resolveBinaryFromBuffer(stagingBuf);
+  const newDuration = metadata.format?.duration || 0;
 
-  // Preserve title/artist overrides (user wins). Update songId + duration only.
-  await trackRef.set({
-    songId,
+  await songRef.set({
+    hash,
+    storagePath,
     duration: newDuration,
     updatedAt: FieldValue.serverTimestamp(),
   }, { merge: true });
@@ -221,5 +197,67 @@ export async function replaceTrackSongFromStaging({ tempPath, compilationId, tra
 
   try { await stagingFile.delete(); } catch (e) { /* ignore */ }
 
-  return { songId, dedupHit, duration: newDuration };
+  return { dedupHit, duration: newDuration };
+}
+
+/**
+ * Delete a compilation, its songs subcollection, its cover, and any binaries
+ * in /store/ that are no longer referenced by any compilation after the delete.
+ *
+ * Authorization: the caller must be the compilation's author (email match) OR
+ * an admin.
+ */
+export async function deleteCompilationFully({ compilationId, callerEmail }) {
+  if (!compilationId || !callerEmail) {
+    throw new Error('deleteCompilationFully: missing arguments');
+  }
+  const bucket = getStorage().bucket();
+  const db = getFirestore();
+
+  const compRef = db.collection('compilations').doc(compilationId);
+  const compSnap = await compRef.get();
+  if (!compSnap.exists) {
+    throw new Error('Compilation not found.');
+  }
+  const comp = compSnap.data();
+  if (comp.author !== callerEmail && !(await isAdminEmail(callerEmail))) {
+    throw new Error('Only the compilation author or an admin may delete this compilation.');
+  }
+
+  const songsSnap = await compRef.collection('songs').get();
+  const hashes = new Set();
+  songsSnap.forEach((d) => { if (d.data().hash) hashes.add(d.data().hash); });
+
+  // Delete songs subcollection in bulk.
+  if (!songsSnap.empty) {
+    const writer = db.bulkWriter();
+    songsSnap.forEach((d) => writer.delete(d.ref));
+    await writer.close();
+  }
+
+  // Delete cover file (best effort).
+  if (comp.coverPath) {
+    try { await bucket.file(comp.coverPath).delete(); } catch (e) { /* ignore */ }
+  }
+
+  // Delete the compilation doc itself.
+  await compRef.delete();
+
+  // For each hash this compilation used, check whether any other song doc
+  // still references it. If not, delete the binary from /store/.
+  let orphansDeleted = 0;
+  for (const hash of hashes) {
+    const stillUsed = await db.collectionGroup('songs')
+      .where('hash', '==', hash)
+      .limit(1)
+      .get();
+    if (stillUsed.empty) {
+      try {
+        await bucket.file(getStorePath(hash)).delete();
+        orphansDeleted += 1;
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  return { songsDeleted: songsSnap.size, orphansDeleted };
 }

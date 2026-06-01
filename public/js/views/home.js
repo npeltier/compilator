@@ -3,7 +3,7 @@
 
 import { auth, db, storage } from '../firebase-init.js';
 import { nextCompilationSlot, slotLabel, deadlineLabel } from '../slot.js';
-import { allCompilations } from '../catalog.js';
+import { allCompilations, displayNameFor } from '../catalog.js';
 import { likeCount } from '../reactions.js';
 import {
   queueAllSongs,
@@ -37,13 +37,14 @@ export async function mount(el, { query }) {
   `;
 
   const user = auth.currentUser;
+  const emailKey = user.email.toLowerCase();
   const comps = allCompilations()
     .slice()
     .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
 
   // ---- Next-slot banner ----
   const slot = nextCompilationSlot();
-  const mine = comps.find((c) => c.authorUid === user.uid && c.season === slot.season && c.year === slot.year);
+  const mine = comps.find((c) => c.author === emailKey && c.season === slot.season && c.year === slot.year);
   const banner = el.querySelector('#nextBanner');
   const slotTxt = slotLabel(slot);
   const deadTxt = deadlineLabel(slot);
@@ -100,21 +101,26 @@ export async function mount(el, { query }) {
   }
 
   // ---- Author chips ----
-  const authors = Array.from(new Set(comps.map((c) => c.authorName).filter(Boolean))).sort();
+  const authorEmails = Array.from(new Set(comps.map((c) => c.author).filter(Boolean))).sort();
   const chipsEl = el.querySelector('#authorChips');
-  const mkChip = (label, active, href, { withAvatar = false } = {}) => {
+  const mkChip = ({ label, active, href, avatarEmail = null }) => {
     const a = document.createElement('a');
     a.className = 'chip' + (active ? ' active' : '');
     a.href = href;
-    a.innerHTML = withAvatar
-      ? `${avatarHTML(label, { size: 'xs' })}<span>${escape(label)}</span>`
+    a.innerHTML = avatarEmail
+      ? `${avatarHTML(avatarEmail, { size: 'xs' })}<span>${escape(label)}</span>`
       : escape(label);
     return a;
   };
-  chipsEl.appendChild(mkChip('Tout', !filterAuthor, '/'));
-  authors.forEach((a) => chipsEl.appendChild(mkChip(a, a === filterAuthor, `/author/${encodeURIComponent(a)}`, { withAvatar: true })));
+  chipsEl.appendChild(mkChip({ label: 'Tout', active: !filterAuthor, href: '/' }));
+  authorEmails.forEach((email) => chipsEl.appendChild(mkChip({
+    label: displayNameFor(email),
+    active: email === filterAuthor,
+    href: `/author/${encodeURIComponent(email)}`,
+    avatarEmail: email,
+  })));
 
-  const shown = filterAuthor ? comps.filter((c) => c.authorName === filterAuthor) : comps;
+  const shown = filterAuthor ? comps.filter((c) => c.author === filterAuthor) : comps;
   el.querySelector('#empty').hidden = shown.length > 0;
 
   // ---- Group by year, then season within year ----
@@ -170,9 +176,9 @@ export async function mount(el, { query }) {
             <div class="art ${c.coverPath ? '' : 'placeholder'}">${c.coverPath ? '' : firstChar}</div>
             <div class="title">${escape(c.title)}</div>
           </a>
-          <a class="cover-card-author" href="/author/${encodeURIComponent(c.authorName || '')}">
-            ${avatarHTML(c.authorName, { size: 'xs' })}
-            <span class="author">${escape(c.authorName || '')}</span>
+          <a class="cover-card-author" href="/author/${encodeURIComponent(c.author || '')}">
+            ${avatarHTML(c.author, { size: 'xs' })}
+            <span class="author">${escape(displayNameFor(c.author))}</span>
           </a>
         `;
         grid.appendChild(card);

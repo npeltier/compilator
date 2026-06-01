@@ -54,14 +54,14 @@ async function main() {
   });
   console.log(`Admin: ${SEED_EMAIL}`);
 
-  const user = await ensureUser();
+  await ensureUser();
 
-  await db.collection('users').doc(user.uid).set({
-    email: SEED_EMAIL,
+  // /users is keyed by lowercased email — same id strategy as /allowlist and /admins.
+  await db.collection('users').doc(SEED_EMAIL).set({
     displayName: SEED_DISPLAY_NAME,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
-  console.log(`Wrote /users/${user.uid}`);
+  console.log(`Wrote /users/${SEED_EMAIL}`);
 
   console.log('\nDone. Sign in at http://localhost:5050/login.html with:');
   console.log(`  email:    ${SEED_EMAIL}`);

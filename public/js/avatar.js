@@ -1,13 +1,13 @@
 // Avatar helpers — used by every view that mentions an author. Resolves the
-// /avatars/{uid}.jpg download URL on demand (cached), falls back to a colored
-// initial when no avatar is set.
+// /avatars/{emailLower}.jpg download URL on demand (cached), falls back to a
+// colored initial when no avatar is set.
 
 import { storage } from './firebase-init.js';
 import {
   ref as storageRef,
   getDownloadURL,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js';
-import { getUserByDisplayName } from './catalog.js';
+import { displayNameFor, getUser } from './catalog.js';
 
 const urlCache = new Map(); // avatarPath → download URL
 
@@ -15,11 +15,13 @@ function initialOf(name) {
   return (name || '?')[0]?.toUpperCase() || '?';
 }
 
-// Returns an HTML string for a small inline avatar pill. `size` is one of
-// 'xs' (16px), 'sm' (22px), 'md' (40px), 'lg' (120px).
-export function avatarHTML(displayName, { size = 'sm', avatarPath = null } = {}) {
-  const path = avatarPath ?? getUserByDisplayName(displayName)?.avatarPath ?? null;
-  const initial = initialOf(displayName);
+// Returns an HTML string for a small inline avatar pill. `email` is the author
+// identity (lowercased email); we resolve the user doc to find avatarPath and
+// fall back to the displayName / email-local-part for the placeholder initial.
+// `size` is one of 'xs' (16px), 'sm' (22px), 'md' (40px), 'lg' (120px).
+export function avatarHTML(email, { size = 'sm', avatarPath = null } = {}) {
+  const path = avatarPath ?? getUser(email)?.avatarPath ?? null;
+  const initial = initialOf(displayNameFor(email));
   const cls = `avatar avatar-${size}${path ? '' : ' placeholder'}`;
   const dataAttr = path ? ` data-avatar="${path}"` : '';
   return `<span class="${cls}"${dataAttr}>${path ? '' : initial}</span>`;

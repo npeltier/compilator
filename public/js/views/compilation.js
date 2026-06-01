@@ -1,18 +1,17 @@
-// Compilation view: cover hero, ordered track list with ❤️/💩 buttons per row.
+// Compilation view: cover hero, ordered song list with ❤️/💩 buttons per row.
 // Authors and admins also get an inline "✏ Modifier" mode that exposes
-// drag-to-reorder, title/artist editing, audio re-upload, and track deletion.
+// drag-to-reorder, title/artist editing, audio re-upload, and song deletion,
+// plus a "🗑 Supprimer la compilation" button.
 
 import { auth, db, storage } from '../firebase-init.js';
 import {
   collection,
-  deleteDoc,
   doc,
   getDocs,
   increment,
   orderBy,
   query,
   serverTimestamp,
-  updateDoc,
   writeBatch,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
 import {
@@ -26,9 +25,14 @@ import {
   toggleDislike,
   onChange as onReactionChange,
 } from '../reactions.js';
-import { allAssignableUsers, getAssignable, getCompilation, getSong, getUser } from '../catalog.js';
+import {
+  allAuthorOptions,
+  displayNameFor,
+  getCompilation,
+} from '../catalog.js';
 import { isAdminSync } from '../auth-guard.js';
-import { replaceSongBinary } from '../upload-pipeline.js';
+import { deleteCompilation, replaceSongBinary } from '../upload-pipeline.js';
+import { navigate } from '../router.js';
 import { avatarHTML, paintAvatars } from '../avatar.js';
 
 function escape(s) {
@@ -56,24 +60,18 @@ export async function mount(el, { params }) {
   }
 
   const user = auth.currentUser;
-  const canEdit = comp.authorUid === user.uid || isAdminSync(user.email);
+  const emailKey = user.email.toLowerCase();
+  const canEdit = comp.author === emailKey || isAdminSync(user.email);
 
-  const tracksSnap = await getDocs(query(collection(db, 'compilations', id, 'tracks'), orderBy('order', 'asc')));
-  // Track shape: keep the raw track-row override values (overrideTitle/Artist)
-  // separately from the display values (which fall back to the song doc), so
-  // edit mode can show whether a custom override exists.
-  let tracks = tracksSnap.docs.map((d) => {
-    const t = d.data();
-    const s = getSong(t.songId) || {};
+  const songsSnap = await getDocs(query(collection(db, 'compilations', id, 'songs'), orderBy('order', 'asc')));
+  let songs = songsSnap.docs.map((d) => {
+    const s = d.data();
     return {
-      trackId: d.id,
-      songId: t.songId,
-      order: t.order,
-      overrideTitle: t.title || '',
-      overrideArtist: t.artist || '',
-      title: t.title || s.title || 'Sans titre',
-      artist: t.artist || s.artist || '',
-      duration: t.duration || s.duration || 0,
+      songId: d.id,
+      order: s.order,
+      title: s.title || 'Sans titre',
+      artist: s.artist || '',
+      duration: s.duration || 0,
       storagePath: s.storagePath,
       compilationId: comp.id,
       compilationTitle: comp.title,
@@ -88,7 +86,7 @@ export async function mount(el, { params }) {
   let editState = null;
 
   function recomputeTotal() {
-    return tracks.reduce((a, t) => a + (t.duration || 0), 0);
+    return songs.reduce((a, t) => a + (t.duration || 0), 0);
   }
 
   async function paintHeroCover() {
@@ -114,8 +112,8 @@ export async function mount(el, { params }) {
         <div class="meta">
           <p class="eyebrow">${comp.season === 'noel' ? '❄ Noël' : '☀ Été'} ${comp.year || ''}</p>
           <h1>${escape(liveCompTitle)}</h1>
-          <div class="by">par <a class="by-link" href="/author/${encodeURIComponent(comp.authorName)}">${avatarHTML(comp.authorName, { size: 'sm' })}<span>${escape(getUser(comp.authorUid)?.displayName || comp.authorName)}</span></a></div>
-          <div class="stats">${tracks.length} morceau${tracks.length > 1 ? 'x' : ''} · ${fmt(totalDur)}</div>
+          <div class="by">par <a class="by-link" href="/author/${encodeURIComponent(comp.author)}">${avatarHTML(comp.author, { size: 'sm' })}<span>${escape(displayNameFor(comp.author))}</span></a></div>
+          <div class="stats">${songs.length} morceau${songs.length > 1 ? 'x' : ''} · ${fmt(totalDur)}</div>
           <div class="actions">
             <button class="btn-accent" id="playAll">▶ Tout écouter</button>
             ${canEdit ? '<button class="btn-ghost" id="editBtn">✏ Modifier</button>' : ''}
@@ -128,7 +126,7 @@ export async function mount(el, { params }) {
     paintAvatars(main);
 
     const tracksEl = main.querySelector('#tracks');
-    tracks.forEach((t, i) => {
+    songs.forEach((t, i) => {
       const li = document.createElement('li');
       li.dataset.songId = t.songId;
       li.innerHTML = `
@@ -145,7 +143,7 @@ export async function mount(el, { params }) {
       `;
       li.addEventListener('click', (e) => {
         if (e.target.closest('.tk-react')) return;
-        playQueue(tracks, { startIndex: i, sourceLabel: liveCompTitle });
+        playQueue(songs, { startIndex: i, sourceLabel: liveCompTitle });
       });
       li.querySelector('.rx-like').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -161,7 +159,7 @@ export async function mount(el, { params }) {
     });
 
     main.querySelector('#playAll').addEventListener('click', () => {
-      playQueue(tracks, { startIndex: 0, sourceLabel: liveCompTitle });
+      playQueue(songs, { startIndex: 0, sourceLabel: liveCompTitle });
     });
     main.querySelector('#editBtn')?.addEventListener('click', () => renderEdit());
   }
@@ -184,18 +182,14 @@ export async function mount(el, { params }) {
     mode = 'edit';
     const isAdmin = isAdminSync(user.email);
     // Snapshot current state — Cancel restores it.
-    const initialKey = (getUser(comp.authorUid)?.email || comp.authorName || '').toLowerCase();
     editState = {
       title: liveCompTitle,
-      authorKey: initialKey,
-      authorUid: comp.authorUid || '',
-      authorName: comp.authorName || '',
-      rows: tracks.map((t) => ({
-        trackId: t.trackId,
+      author: comp.author || '',
+      rows: songs.map((t) => ({
         songId: t.songId,
         order: t.order,
-        overrideTitle: t.overrideTitle,
-        overrideArtist: t.overrideArtist,
+        title: t.title,
+        artist: t.artist,
         duration: t.duration,
         deleted: false,
       })),
@@ -203,19 +197,19 @@ export async function mount(el, { params }) {
 
     // Admin-only author dropdown. Options union /users (signed-in) and
     // /allowlist (allowlisted but not yet signed in). Current author is
-    // pre-selected by email key; if it doesn't match anyone we show a
+    // pre-selected by email; if it doesn't match anyone we show a
     // "(hors liste)" placeholder so the current value is still visible.
-    const assignableList = allAssignableUsers();
-    const currentInList = editState.authorKey && assignableList.some((u) => u.key === editState.authorKey);
+    const authorList = allAuthorOptions();
+    const currentInList = editState.author && authorList.some((u) => u.email === editState.author);
     const authorBlock = isAdmin
       ? `
         <label for="edAuthor" style="margin-top:8px;">Auteur</label>
         <select id="edAuthor">
-          ${!currentInList && (editState.authorKey || editState.authorName) ? `<option value="" selected>${escape(editState.authorName || editState.authorKey)} (hors liste)</option>` : ''}
-          ${assignableList.map((u) => `<option value="${escape(u.key)}" ${u.key === editState.authorKey ? 'selected' : ''}>${escape(u.displayName || u.email || u.key)}${u.linked ? '' : ' (en attente)'}</option>`).join('')}
+          ${!currentInList && editState.author ? `<option value="${escape(editState.author)}" selected>${escape(editState.author)} (hors liste)</option>` : ''}
+          ${authorList.map((u) => `<option value="${escape(u.email)}" ${u.email === editState.author ? 'selected' : ''}>${escape(u.displayName)}${u.linked ? '' : ' (en attente)'}</option>`).join('')}
         </select>
       `
-      : `<div class="by" style="margin-top:8px;">par ${escape(getUser(comp.authorUid)?.displayName || comp.authorName)}</div>`;
+      : `<div class="by" style="margin-top:8px;">par ${escape(displayNameFor(comp.author))}</div>`;
 
     main.innerHTML = `
       <div class="detail-hero edit-mode">
@@ -230,6 +224,9 @@ export async function mount(el, { params }) {
             <button class="btn-ghost" id="cancelEdit">Annuler</button>
             <button class="btn-accent" id="saveEdit">Enregistrer</button>
           </div>
+          <div class="actions" style="margin-top:24px;">
+            <button class="btn-ghost danger" id="deleteCompBtn">🗑 Supprimer la compilation</button>
+          </div>
         </div>
       </div>
       <div id="edError" class="error" hidden></div>
@@ -239,10 +236,7 @@ export async function mount(el, { params }) {
 
     if (isAdmin) {
       main.querySelector('#edAuthor').addEventListener('change', (e) => {
-        const picked = getAssignable(e.target.value);
-        editState.authorKey = e.target.value;
-        editState.authorUid = picked?.uid || '';
-        editState.authorName = picked?.displayName || picked?.email || editState.authorName;
+        editState.author = e.target.value.toLowerCase();
       });
     }
 
@@ -255,6 +249,7 @@ export async function mount(el, { params }) {
 
     main.querySelector('#cancelEdit').addEventListener('click', () => renderView());
     main.querySelector('#saveEdit').addEventListener('click', () => saveEdit());
+    main.querySelector('#deleteCompBtn').addEventListener('click', () => deleteCurrentCompilation());
   }
 
   function renderEditRows(list) {
@@ -267,8 +262,8 @@ export async function mount(el, { params }) {
       li.innerHTML = `
         <span class="grip" title="Glisser pour réordonner">⋮⋮</span>
         <div class="ed-fields">
-          <input class="ed-title" placeholder="Titre" value="${escape(r.overrideTitle)}">
-          <input class="ed-artist" placeholder="Artiste" value="${escape(r.overrideArtist)}">
+          <input class="ed-title" placeholder="Titre" value="${escape(r.title)}">
+          <input class="ed-artist" placeholder="Artiste" value="${escape(r.artist)}">
         </div>
         <div class="ed-actions">
           <button class="ed-replace" title="Remplacer l'audio" aria-label="Remplacer l'audio">🔄</button>
@@ -278,8 +273,8 @@ export async function mount(el, { params }) {
         <span class="dur">${fmt(r.duration)}</span>
         <div class="ed-progress" hidden><span></span></div>
       `;
-      li.querySelector('.ed-title').addEventListener('input', (e) => { r.overrideTitle = e.target.value; });
-      li.querySelector('.ed-artist').addEventListener('input', (e) => { r.overrideArtist = e.target.value; });
+      li.querySelector('.ed-title').addEventListener('input', (e) => { r.title = e.target.value; });
+      li.querySelector('.ed-artist').addEventListener('input', (e) => { r.artist = e.target.value; });
       li.querySelector('.ed-delete').addEventListener('click', () => {
         r.deleted = true;
         renderEditRows(list);
@@ -336,21 +331,12 @@ export async function mount(el, { params }) {
         const result = await replaceSongBinary({
           file,
           compilationId: id,
-          trackId: row.trackId,
+          songId: row.songId,
           onProgress: (p) => { progressFill.style.width = `${(p * 100).toFixed(0)}%`; },
         });
-        // Reflect new songId/duration locally; the live `tracks` array will be
-        // refreshed from Firestore on next view-mode render. For now, update
-        // editState so the UI keeps showing accurate duration.
-        row.songId = result.songId;
         row.duration = result.duration || 0;
-        // Also update the live tracks entry (used by view mode) so things stay
-        // coherent if the user toggles back without saving.
-        const liveT = tracks.find((t) => t.trackId === row.trackId);
-        if (liveT) {
-          liveT.songId = result.songId;
-          liveT.duration = result.duration || 0;
-        }
+        const liveT = songs.find((t) => t.songId === row.songId);
+        if (liveT) liveT.duration = result.duration || 0;
         progressBar.hidden = true;
         li.querySelector('.dur').textContent = fmt(row.duration);
         updateStats();
@@ -369,6 +355,22 @@ export async function mount(el, { params }) {
     errEl.hidden = false;
   }
 
+  async function deleteCurrentCompilation() {
+    if (!confirm(`Supprimer définitivement « ${liveCompTitle} » et tous ses morceaux ?`)) return;
+    const btn = main.querySelector('#deleteCompBtn');
+    btn.disabled = true;
+    btn.textContent = 'Suppression…';
+    try {
+      await deleteCompilation(id);
+      navigate('/');
+    } catch (err) {
+      console.error('deleteCompilation', err);
+      showEditError(`Échec de la suppression : ${err.message || err}`);
+      btn.disabled = false;
+      btn.textContent = '🗑 Supprimer la compilation';
+    }
+  }
+
   async function saveEdit() {
     const saveBtn = main.querySelector('#saveEdit');
     const cancelBtn = main.querySelector('#cancelEdit');
@@ -385,15 +387,10 @@ export async function mount(el, { params }) {
       }
 
       // Author reassignment (admin only — the dropdown isn't rendered for
-      // non-admins so editState.authorKey stays at its initial value).
-      // authorUid may be '' when admin picked an allowlist-only entry whose
-      // assignee hasn't signed in yet; rules permit non-self authorUid for
-      // admins, so the write is accepted.
-      const initialKey = (getUser(comp.authorUid)?.email || comp.authorName || '').toLowerCase();
-      if (editState.authorKey && editState.authorKey !== initialKey) {
+      // non-admins so editState.author stays at its initial value).
+      if (editState.author && editState.author !== comp.author) {
         batch.update(compRef, {
-          authorUid: editState.authorUid,
-          authorName: editState.authorName,
+          author: editState.author,
           updatedAt: serverTimestamp(),
         });
       }
@@ -404,22 +401,22 @@ export async function mount(el, { params }) {
       let deletedCount = 0;
 
       surviving.forEach((r, i) => {
-        const original = tracks.find((t) => t.trackId === r.trackId);
-        const trackRef = doc(db, 'compilations', id, 'tracks', r.trackId);
+        const original = songs.find((t) => t.songId === r.songId);
+        const songRef = doc(db, 'compilations', id, 'songs', r.songId);
         const update = {};
         if (original.order !== i) update.order = i;
-        if ((r.overrideTitle || '') !== (original.overrideTitle || '')) update.title = r.overrideTitle || null;
-        if ((r.overrideArtist || '') !== (original.overrideArtist || '')) update.artist = r.overrideArtist || null;
+        if ((r.title || '') !== (original.title || '')) update.title = r.title || null;
+        if ((r.artist || '') !== (original.artist || '')) update.artist = r.artist || null;
         if (Object.keys(update).length > 0) {
           update.updatedAt = serverTimestamp();
-          batch.update(trackRef, update);
+          batch.update(songRef, update);
         }
       });
 
       editState.rows
         .filter((r) => r.deleted)
         .forEach((r) => {
-          batch.delete(doc(db, 'compilations', id, 'tracks', r.trackId));
+          batch.delete(doc(db, 'compilations', id, 'songs', r.songId));
           deletedDurationTotal += r.duration || 0;
           deletedCount += 1;
         });
@@ -439,23 +436,17 @@ export async function mount(el, { params }) {
         comp.title = trimmedTitle;
         liveCompTitle = trimmedTitle;
       }
-      if (editState.authorKey && editState.authorKey !== initialKey) {
-        comp.authorUid = editState.authorUid;
-        comp.authorName = editState.authorName;
+      if (editState.author && editState.author !== comp.author) {
+        comp.author = editState.author;
       }
-      tracks = surviving.map((r, i) => {
-        const original = tracks.find((t) => t.trackId === r.trackId);
-        const s = getSong(r.songId) || {};
+      songs = surviving.map((r, i) => {
+        const original = songs.find((t) => t.songId === r.songId);
         return {
           ...original,
-          songId: r.songId,
           order: i,
-          overrideTitle: r.overrideTitle,
-          overrideArtist: r.overrideArtist,
-          title: r.overrideTitle || s.title || 'Sans titre',
-          artist: r.overrideArtist || s.artist || '',
+          title: r.title || 'Sans titre',
+          artist: r.artist || '',
           duration: r.duration,
-          storagePath: s.storagePath || original.storagePath,
         };
       });
 

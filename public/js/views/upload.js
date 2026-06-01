@@ -5,11 +5,10 @@ import { auth, db } from '../firebase-init.js';
 import { uploadSong, uploadCover, runWithConcurrency } from '../upload-pipeline.js';
 import { nextCompilationSlot, slotLabel, deadlineLabel } from '../slot.js';
 import { navigate } from '../router.js';
+import { displayNameFor } from '../catalog.js';
 import {
   addDoc,
   collection,
-  doc,
-  getDoc,
   serverTimestamp,
   updateDoc,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
@@ -30,8 +29,8 @@ const STATUS_LABEL = { pending: 'en attente', uploading: 'envoi…', done: 'ok',
 
 export async function mount(el) {
   const user = auth.currentUser;
-  const userDoc = await getDoc(doc(db, 'users', user.uid));
-  const myDisplayName = userDoc.exists() ? (userDoc.data().displayName || user.email) : user.email;
+  const emailKey = user.email.toLowerCase();
+  const myDisplayName = displayNameFor(emailKey);
   const slot = nextCompilationSlot();
 
   el.innerHTML = `
@@ -43,16 +42,11 @@ export async function mount(el) {
 
       <section class="section">
         <h3>Détails</h3>
-        <div class="field-row">
-          <div>
-            <label for="title">Titre</label>
-            <input id="title" placeholder="ex. Christmousse" required>
-          </div>
-          <div>
-            <label for="author">Auteur (remplacer)</label>
-            <input id="author" placeholder="par défaut « ${escape(myDisplayName)} »">
-          </div>
-        </div>
+        <label for="title">Titre</label>
+        <input id="title" placeholder="ex. Christmousse" required>
+        <p style="color:var(--ink-faint);font-size:12px;margin-top:6px;">
+          Auteur : <strong>${escape(myDisplayName)}</strong> (modifiable depuis ton profil).
+        </p>
       </section>
 
       <section class="section">
@@ -191,16 +185,13 @@ export async function mount(el) {
     errEl.hidden = true;
     const title = el.querySelector('#title').value.trim();
     const { season, year } = slot;
-    const authorOverride = el.querySelector('#author').value.trim();
-    const authorName = authorOverride || myDisplayName;
 
     const btn = el.querySelector('#publish');
     btn.disabled = true; btn.textContent = 'Publication…';
     try {
       const compRef = await addDoc(collection(db, 'compilations'), {
         title, season, year,
-        authorUid: user.uid,
-        authorName,
+        author: emailKey,
         coverPath: null,
         coverSource: null,
         status: 'draft',

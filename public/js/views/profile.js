@@ -21,7 +21,7 @@ import {
   onChange as onReactionChange,
   toggleLike,
 } from '../reactions.js';
-import { getPlacement, trackFromSongId, updateUserLocal } from '../catalog.js';
+import { trackFromSongId, updateUserLocal } from '../catalog.js';
 import { playQueue } from '../player.js';
 import { avatarUrl, invalidateAvatar } from '../avatar.js';
 
@@ -119,7 +119,8 @@ export async function mount(el) {
     </div>
   `;
 
-  const userDocRef = doc(db, 'users', user.uid);
+  const emailKey = user.email.toLowerCase();
+  const userDocRef = doc(db, 'users', emailKey);
   const userDocSnap = await getDoc(userDocRef);
   const data = userDocSnap.exists() ? userDocSnap.data() : {};
   el.querySelector('#email').value = user.email;
@@ -152,11 +153,11 @@ export async function mount(el) {
     try {
       const blob = await resizeToJpegBlob(file);
       avatarStatus.textContent = 'Envoi…';
-      const path = `avatars/${user.uid}.jpg`;
+      const path = `avatars/${emailKey}.jpg`;
       invalidateAvatar(path);
       await uploadBytes(storageRef(storage, path), blob, { contentType: 'image/jpeg' });
       await setDoc(userDocRef, { avatarPath: path, updatedAt: serverTimestamp() }, { merge: true });
-      updateUserLocal(user.uid, { avatarPath: path });
+      updateUserLocal(emailKey, { avatarPath: path });
       avatarStatus.textContent = 'Avatar mis à jour.';
       // Force a fresh fetch since the URL token changed.
       const url = await avatarUrl(path);
@@ -182,7 +183,7 @@ export async function mount(el) {
     if (!displayName) return;
     try {
       await setDoc(userDocRef, { displayName, updatedAt: serverTimestamp() }, { merge: true });
-      updateUserLocal(user.uid, { displayName });
+      updateUserLocal(emailKey, { displayName });
       okEl.hidden = false;
     } catch (err) {
       errEl.textContent = err.message; errEl.hidden = false;
@@ -201,13 +202,12 @@ export async function mount(el) {
     ids.forEach((songId, i) => {
       const t = trackFromSongId(songId);
       if (!t) return;
-      const placement = getPlacement(songId);
       const li = document.createElement('li');
       li.innerHTML = `
         <button class="lk-play" title="Jouer à partir d'ici">▶</button>
         <div class="lk-meta">
           <div class="title">${escape(t.title)}</div>
-          <div class="artist">${escape(t.artist)} ${placement ? `· <a href="/c/${placement.compilationId}">${escape(placement.compilationTitle)}</a>` : ''}</div>
+          <div class="artist">${escape(t.artist)} ${t.compilationId ? `· <a href="/c/${t.compilationId}">${escape(t.compilationTitle)}</a>` : ''}</div>
         </div>
         <button class="lk-unlike" title="Retirer le ❤️" aria-label="Retirer">❤️</button>
       `;

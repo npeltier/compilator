@@ -7,10 +7,14 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function callerEmail() {
+      return request.auth.token.email.lower();
+    }
+
     function isAllowlisted() {
       return isSignedIn()
         && request.auth.token.email != null
-        && exists(/databases/$(database)/documents/allowlist/$(request.auth.token.email.lower()));
+        && exists(/databases/$(database)/documents/allowlist/$(callerEmail()));
     }
 
     // Admins can edit any compilation (not just their own). Membership is
@@ -19,7 +23,7 @@ service cloud.firestore {
     function isAdmin() {
       return isSignedIn()
         && request.auth.token.email != null
-        && exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()));
+        && exists(/databases/$(database)/documents/admins/$(callerEmail()));
     }
 
     // Allowlist: only Functions / admins write (via Admin SDK, bypassing rules).
@@ -28,22 +32,23 @@ service cloud.firestore {
       // Each user reads their own entry to check membership; admins can read
       // the whole collection so the assign-author dropdowns can list everyone.
       allow read: if isSignedIn()
-                  && (request.auth.token.email.lower() == email || isAdmin());
+                  && (callerEmail() == email || isAdmin());
       allow write: if false;
     }
 
     // Admins: same shape as /allowlist. Each user can read only their own entry
     // (to check if they're an admin); writes happen via Admin SDK.
     match /admins/{email} {
-      allow read: if isSignedIn() && request.auth.token.email.lower() == email;
+      allow read: if isSignedIn() && callerEmail() == email;
       allow write: if false;
     }
 
-    // User profiles: each user owns their own doc.
-    match /users/{uid} {
+    // User profiles: doc id is the user's lowercased email — same id strategy
+    // as /allowlist and /admins. Each user owns their own doc.
+    match /users/{email} {
       allow read: if isAllowlisted();
-      allow create: if isSignedIn() && request.auth.uid == uid;
-      allow update: if isSignedIn() && request.auth.uid == uid
+      allow create: if isSignedIn() && callerEmail() == email;
+      allow update: if isSignedIn() && callerEmail() == email
                     && request.resource.data.diff(resource.data).affectedKeys()
                        .hasOnly(['displayName', 'avatarPath', 'updatedAt']);
       allow delete: if false;
@@ -51,43 +56,37 @@ service cloud.firestore {
       // Per-user reactions (❤️ like / 💩 dislike) on songs. Only the owning user
       // can read or write their own reactions.
       match /reactions/{songId} {
-        allow read, write: if isSignedIn() && request.auth.uid == uid;
+        allow read, write: if isSignedIn() && callerEmail() == email;
       }
     }
 
-    // Global song catalog (dedup by hash). Only Functions writes; allowlisted users read.
-    match /songs/{songId} {
-      allow read: if isAllowlisted();
-      allow write: if false;
-    }
-
-    // Compilations: allowlisted users read; the owning user (authorUid) or an
-    // admin can update/delete. Creates still require the doc's authorUid to be
-    // the caller — admins create under their own name like everyone else.
+    // Compilations: allowlisted users read; the owning user (author == email)
+    // or an admin can update/delete. Creates require the doc's `author` to be
+    // the caller's email — admins create under their own email like everyone else.
     match /compilations/{compId} {
       allow read: if isAllowlisted();
       allow create: if isAllowlisted()
-                    && (request.resource.data.authorUid == request.auth.uid || isAdmin());
+                    && (request.resource.data.author == callerEmail() || isAdmin());
       allow update: if isAllowlisted()
-                    && (resource.data.authorUid == request.auth.uid || isAdmin());
+                    && (resource.data.author == callerEmail() || isAdmin());
       allow delete: if isAllowlisted()
-                    && (resource.data.authorUid == request.auth.uid || isAdmin());
+                    && (resource.data.author == callerEmail() || isAdmin());
 
-      // Tracks subcollection: written by Functions during processSong, readable by
-      // allowlisted users. The compilation's author OR an admin may also
-      // reorder / edit / delete tracks directly (for client-side editing).
-      match /tracks/{trackId} {
+      // Songs subcollection: each compilation owns its songs. Written by
+      // Functions during processSong, readable by allowlisted users. The
+      // compilation's author OR an admin may also reorder / edit / delete
+      // songs directly (for client-side editing).
+      match /songs/{songId} {
         allow read: if isAllowlisted();
         allow write: if isAllowlisted()
-                     && (get(/databases/$(database)/documents/compilations/$(compId)).data.authorUid == request.auth.uid
+                     && (get(/databases/$(database)/documents/compilations/$(compId)).data.author == callerEmail()
                          || isAdmin());
       }
     }
 
-    // Collection-group read for `tracks` so the client can build the catalog
-    // (songId → first-compilation placement) with one query instead of N+1.
-    // Per-compilation track writes are still gated by the rule above.
-    match /{path=**}/tracks/{trackId} {
+    // Collection-group read for `songs` so the client can build the catalog
+    // in one query instead of N+1. Per-compilation song writes are gated above.
+    match /{path=**}/songs/{songId} {
       allow read: if isAllowlisted();
     }
 

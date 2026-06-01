@@ -3,8 +3,9 @@ import admin from 'firebase-admin';
 
 import { isAdminEmail, requireAllowlistedCaller } from './auth.js';
 import {
+  deleteCompilationFully,
   processSongFromStaging,
-  replaceTrackSongFromStaging,
+  replaceSongFromStaging,
   uploadCoverFromStaging,
 } from './processing.js';
 
@@ -12,12 +13,24 @@ if (admin.apps.length === 0) {
   admin.initializeApp();
 }
 
+async function loadCompilationOrThrow(compilationId) {
+  const snap = await admin.firestore().collection('compilations').doc(compilationId).get();
+  if (!snap.exists) throw new HttpsError('not-found', 'Compilation not found.');
+  return snap.data();
+}
+
+async function requireAuthorOrAdmin(comp, email) {
+  if (comp.author !== email && !(await isAdminEmail(email))) {
+    throw new HttpsError('permission-denied', 'You are not the author of this compilation.');
+  }
+}
+
 /**
  * processSong({ tempPath, compilationId, order })
  *
  * The client uploads an MP3 directly to /uploads/{uid}/<uuid>.mp3 via the Firebase
- * Storage JS SDK (bypassing Function HTTP body limits), then calls this to dedupe,
- * file the song, and create the track row in the compilation.
+ * Storage JS SDK (bypassing Function HTTP body limits), then calls this to dedupe
+ * the binary and create the song row in the compilation.
  */
 export const processSong = onCall({ memory: '512MiB', timeoutSeconds: 120 }, async (req) => {
   const { uid, email } = await requireAllowlistedCaller(req.auth);
@@ -25,20 +38,13 @@ export const processSong = onCall({ memory: '512MiB', timeoutSeconds: 120 }, asy
   if (!tempPath || !compilationId || order == null) {
     throw new HttpsError('invalid-argument', 'tempPath, compilationId, and order are required.');
   }
-  // Enforce that the staging path belongs to the caller — defense in depth.
   if (!tempPath.startsWith(`uploads/${uid}/`)) {
     throw new HttpsError('permission-denied', 'tempPath must be in your /uploads/<uid>/ folder.');
   }
-  // Ownership check on the compilation — author OR admin.
-  const compSnap = await admin.firestore().collection('compilations').doc(compilationId).get();
-  if (!compSnap.exists) {
-    throw new HttpsError('not-found', 'Compilation not found.');
-  }
-  if (compSnap.data().authorUid !== uid && !(await isAdminEmail(email))) {
-    throw new HttpsError('permission-denied', 'You are not the author of this compilation.');
-  }
+  const comp = await loadCompilationOrThrow(compilationId);
+  await requireAuthorOrAdmin(comp, email);
   try {
-    return await processSongFromStaging({ tempPath, compilationId, order, uploaderUid: uid });
+    return await processSongFromStaging({ tempPath, compilationId, order });
   } catch (err) {
     console.error('processSong error', err);
     throw new HttpsError('internal', err.message || 'Failed to process song.');
@@ -59,13 +65,10 @@ export const uploadCover = onCall({ memory: '256MiB', timeoutSeconds: 60 }, asyn
   if (!tempPath.startsWith(`uploads/${uid}/`)) {
     throw new HttpsError('permission-denied', 'tempPath must be in your /uploads/<uid>/ folder.');
   }
-  const compSnap = await admin.firestore().collection('compilations').doc(compilationId).get();
-  if (!compSnap.exists) throw new HttpsError('not-found', 'Compilation not found.');
-  if (compSnap.data().authorUid !== uid && !(await isAdminEmail(email))) {
-    throw new HttpsError('permission-denied', 'You are not the author of this compilation.');
-  }
+  const comp = await loadCompilationOrThrow(compilationId);
+  await requireAuthorOrAdmin(comp, email);
   try {
-    return await uploadCoverFromStaging({ tempPath, compilationId, ext, uploaderUid: uid });
+    return await uploadCoverFromStaging({ tempPath, compilationId, ext });
   } catch (err) {
     console.error('uploadCover error', err);
     throw new HttpsError('internal', err.message || 'Failed to upload cover.');
@@ -73,41 +76,51 @@ export const uploadCover = onCall({ memory: '256MiB', timeoutSeconds: 60 }, asyn
 });
 
 /**
- * replaceTrackSong({ tempPath, compilationId, trackId })
+ * replaceSong({ tempPath, compilationId, songId })
  *
- * Swap a track's audio binary in place. Used by the compilation edit mode's
- * 🔄 button. The compilation's author OR an admin may call this; the new file
- * goes through the same dedup pipeline as processSong. Per-track title/artist
- * overrides are preserved; only songId + duration are updated.
+ * Swap a song's audio binary in place. Used by the compilation edit mode's 🔄
+ * button. The compilation's author OR an admin may call this; the new file
+ * goes through the same dedup pipeline as processSong. Title/artist on the
+ * song doc are preserved; only hash/storagePath/duration update.
  */
-export const replaceTrackSong = onCall({ memory: '512MiB', timeoutSeconds: 120 }, async (req) => {
+export const replaceSong = onCall({ memory: '512MiB', timeoutSeconds: 120 }, async (req) => {
   const { uid, email } = await requireAllowlistedCaller(req.auth);
-  const { tempPath, compilationId, trackId } = req.data || {};
-  if (!tempPath || !compilationId || !trackId) {
-    throw new HttpsError('invalid-argument', 'tempPath, compilationId, and trackId are required.');
+  const { tempPath, compilationId, songId } = req.data || {};
+  if (!tempPath || !compilationId || !songId) {
+    throw new HttpsError('invalid-argument', 'tempPath, compilationId, and songId are required.');
   }
   if (!tempPath.startsWith(`uploads/${uid}/`)) {
     throw new HttpsError('permission-denied', 'tempPath must be in your /uploads/<uid>/ folder.');
   }
-  const compSnap = await admin.firestore().collection('compilations').doc(compilationId).get();
-  if (!compSnap.exists) {
-    throw new HttpsError('not-found', 'Compilation not found.');
-  }
-  const comp = compSnap.data();
-  if (comp.authorUid !== uid && !(await isAdminEmail(email))) {
-    throw new HttpsError('permission-denied', 'You are not the author of this compilation.');
-  }
+  const comp = await loadCompilationOrThrow(compilationId);
+  await requireAuthorOrAdmin(comp, email);
   try {
-    return await replaceTrackSongFromStaging({
-      tempPath,
-      compilationId,
-      trackId,
-      uploaderUid: uid,
-      callerEmail: email,
-    });
+    return await replaceSongFromStaging({ tempPath, compilationId, songId, callerEmail: email });
   } catch (err) {
-    console.error('replaceTrackSong error', err);
-    throw new HttpsError('internal', err.message || 'Failed to replace track.');
+    console.error('replaceSong error', err);
+    throw new HttpsError('internal', err.message || 'Failed to replace song.');
+  }
+});
+
+/**
+ * deleteCompilation({ compilationId })
+ *
+ * Atomically delete a compilation, its songs subcollection, its cover, and
+ * any /store/ binaries that no other compilation references afterwards.
+ */
+export const deleteCompilation = onCall({ memory: '512MiB', timeoutSeconds: 300 }, async (req) => {
+  const { email } = await requireAllowlistedCaller(req.auth);
+  const { compilationId } = req.data || {};
+  if (!compilationId) {
+    throw new HttpsError('invalid-argument', 'compilationId is required.');
+  }
+  const comp = await loadCompilationOrThrow(compilationId);
+  await requireAuthorOrAdmin(comp, email);
+  try {
+    return await deleteCompilationFully({ compilationId, callerEmail: email });
+  } catch (err) {
+    console.error('deleteCompilation error', err);
+    throw new HttpsError('internal', err.message || 'Failed to delete compilation.');
   }
 });
 

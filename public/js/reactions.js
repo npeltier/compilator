@@ -1,6 +1,6 @@
 // Per-user song reactions (❤️ like / 💩 dislike).
 //
-// Data model: /users/{uid}/reactions/{songId} { value: 'like'|'dislike', at }
+// Data model: /users/{emailLower}/reactions/{songId} { value: 'like'|'dislike', at }
 //
 // One read on shell boot (small per-user subcollection); writes happen as the
 // user clicks the heart/poop buttons. Listeners are notified after each change
@@ -18,12 +18,12 @@ import {
 
 const cache = new Map();
 const listeners = new Set();
-let userId = null;
+let userKey = null;
 
-export async function loadReactions(uid) {
-  userId = uid;
+export async function loadReactions(email) {
+  userKey = (email || '').toLowerCase();
   cache.clear();
-  const snap = await getDocs(collection(db, 'users', uid, 'reactions'));
+  const snap = await getDocs(collection(db, 'users', userKey, 'reactions'));
   snap.forEach((d) => cache.set(d.id, d.data().value));
 }
 
@@ -43,8 +43,8 @@ export function dislikeCount() { return dislikedSongIds().length; }
 // Toggle: clicking the same value clears, otherwise sets it. Mutually exclusive
 // between like and dislike. Pass `null` to clear explicitly.
 export async function setReaction(songId, value) {
-  if (!userId) throw new Error('reactions not loaded');
-  const ref = doc(db, 'users', userId, 'reactions', songId);
+  if (!userKey) throw new Error('reactions not loaded');
+  const ref = doc(db, 'users', userKey, 'reactions', songId);
   if (value == null) {
     cache.delete(songId);
     emit(songId);

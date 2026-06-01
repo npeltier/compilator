@@ -86,15 +86,14 @@
         if (mode === 'signin') {
           await signInWithEmailAndPassword(auth, email, password);
         } else {
-          const cred = await createUserWithEmailAndPassword(auth, email, password);
+          await createUserWithEmailAndPassword(auth, email, password);
           if (!(await isAllowlisted(email))) {
             await signOut(auth);
             throw new Error("Cette adresse n'est pas autorisée. Demandez à Nicolas de l'ajouter.");
           }
-          await setDoc(doc(db, 'users', cred.user.uid), {
-            email,
+          await setDoc(doc(db, 'users', email), {
             displayName: email.split('@')[0],
-            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
           }, { merge: true });
         }
         // onAuthStateChanged above handles the redirect (or sign-out if not allowlisted).
