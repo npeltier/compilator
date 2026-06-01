@@ -5,6 +5,8 @@
 // All writes go through Cloud Functions (rules block direct client writes to
 // /allowlist, and /users updates are restricted to self).
 
+import { auth } from '../firebase-init.js';
+import { sendPasswordResetEmail } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js';
 import { requireAdmin } from '../auth-guard.js';
 import {
   allAuthorOptions,
@@ -134,12 +136,21 @@ export async function mount(el) {
     const btn = el.querySelector('#addForm button[type=submit]');
     btn.disabled = true; btn.textContent = 'Envoi…';
     try {
-      await upsertUser({ email, displayName });
+      const result = await upsertUser({ email, displayName });
       if (displayName) updateUserLocal(email, { displayName });
       await loadAllowlist();
       el.querySelector('#addEmail').value = '';
       el.querySelector('#addName').value = '';
-      flash(okEl, `${email} ajouté${displayName ? ` en tant que ${displayName}` : ''}`);
+      let msg = `${email} ajouté${displayName ? ` en tant que ${displayName}` : ''}`;
+      if (result.authCreated) {
+        try {
+          await sendPasswordResetEmail(auth, email);
+          msg += ` — e-mail d'invitation envoyé pour qu'il définisse son mot de passe.`;
+        } catch (mailErr) {
+          msg += ` — compte créé, mais l'envoi de l'e-mail d'invitation a échoué (${mailErr.message || mailErr}). Demande-lui de cliquer sur « Mot de passe oublié » à la connexion.`;
+        }
+      }
+      flash(okEl, msg);
       renderList();
     } catch (err) {
       flash(errEl, `Échec : ${err.message || err}`);

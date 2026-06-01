@@ -128,9 +128,14 @@ export const deleteCompilation = onCall({ memory: '512MiB', timeoutSeconds: 300 
 /**
  * upsertUser({ email, displayName? })
  *
- * Admin-only. Creates /allowlist/{email} so the user can sign in, and optionally
- * seeds /users/{email} with a displayName so authored content shows the right
- * name even before the user signs in for the first time.
+ * Admin-only. Creates /allowlist/{email}, optionally seeds /users/{email}
+ * with a displayName, and — if the email has no Firebase Auth account yet —
+ * creates one with a random temporary password and sends a password-reset
+ * email so the new member can set their own password.
+ *
+ * Returns { email, displayName, authCreated, resetLink? }. `resetLink` is only
+ * populated when running against the Auth emulator (no real email is sent in
+ * the emulator), so dev/test callers can surface it instead.
  */
 export const upsertUser = onCall({ memory: '256MiB', timeoutSeconds: 30 }, async (req) => {
   const { email: callerEmail } = await requireAllowlistedCaller(req.auth);
@@ -142,27 +147,49 @@ export const upsertUser = onCall({ memory: '256MiB', timeoutSeconds: 30 }, async
     throw new HttpsError('invalid-argument', 'A valid email is required.');
   }
   const key = email.toLowerCase().trim();
+  const trimmed = (displayName || '').trim();
   const db = admin.firestore();
+
+  // Allowlist + optional display name.
   await db.collection('allowlist').doc(key).set({
     email: key,
     addedBy: callerEmail,
     addedAt: FieldValue.serverTimestamp(),
   }, { merge: true });
-  const trimmed = (displayName || '').trim();
   if (trimmed) {
     await db.collection('users').doc(key).set({
       displayName: trimmed,
       updatedAt: FieldValue.serverTimestamp(),
     }, { merge: true });
   }
-  return { email: key, displayName: trimmed || null };
+
+  // Make sure a Firebase Auth account exists for this email so the person can
+  // actually sign in. If we just created it, the caller (frontend) will follow
+  // up with sendPasswordResetEmail() so the new member gets an invite email.
+  const auth = admin.auth();
+  let authCreated = false;
+  try {
+    await auth.getUserByEmail(key);
+  } catch (err) {
+    if (err.code !== 'auth/user-not-found') throw err;
+    const tempPassword = `tmp-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+    await auth.createUser({
+      email: key,
+      password: tempPassword,
+      emailVerified: false,
+      ...(trimmed ? { displayName: trimmed } : {}),
+    });
+    authCreated = true;
+  }
+
+  return { email: key, displayName: trimmed || null, authCreated };
 });
 
 /**
  * removeUser({ email })
  *
- * Admin-only. Removes /allowlist/{email} and /users/{email}. The Firebase Auth
- * record is NOT touched (you can disable that in the Firebase console if needed).
+ * Admin-only. Removes /allowlist/{email}, /users/{email}, and the Firebase
+ * Auth account if it exists.
  */
 export const removeUser = onCall({ memory: '256MiB', timeoutSeconds: 30 }, async (req) => {
   const { email: callerEmail } = await requireAllowlistedCaller(req.auth);
@@ -178,6 +205,12 @@ export const removeUser = onCall({ memory: '256MiB', timeoutSeconds: 30 }, async
   const db = admin.firestore();
   await db.collection('allowlist').doc(key).delete();
   await db.collection('users').doc(key).delete().catch(() => {});
+  try {
+    const u = await admin.auth().getUserByEmail(key);
+    await admin.auth().deleteUser(u.uid);
+  } catch (err) {
+    if (err.code !== 'auth/user-not-found') console.warn('deleteUser failed', err);
+  }
   return { email: key };
 });
 

@@ -34,6 +34,31 @@ let cursor = -1;
 let sourceLabel = '';
 let bar;
 const coverUrlCache = new Map(); // coverPath → resolved download URL (download URLs are stable)
+const audioUrlCache = new Map(); // storagePath → resolved download URL (same)
+
+// Resolve a song's download URL, caching forever. Firebase download URLs embed
+// a stable token, so the same path always returns the same URL within a session.
+async function resolveAudioUrl(storagePath) {
+  if (!storagePath) return null;
+  if (audioUrlCache.has(storagePath)) return audioUrlCache.get(storagePath);
+  const url = await getDownloadURL(storageRef(storage, storagePath));
+  audioUrlCache.set(storagePath, url);
+  return url;
+}
+
+// Kick off URL resolution for the next few tracks in the queue so their src is
+// ready to swap synchronously on `ended`. Critical on mobile: when the screen
+// locks and the page goes to background, network fetches inside the `ended`
+// handler are throttled / deferred, which would otherwise stall the queue.
+// We look ahead a few tracks so auto-advance can chain across several songs
+// even if no subsequent prefetch ever lands while backgrounded.
+const PREFETCH_LOOKAHEAD = 3;
+function prefetchAhead() {
+  for (let i = 1; i <= PREFETCH_LOOKAHEAD; i++) {
+    const t = queue[cursor + i];
+    if (t?.storagePath) resolveAudioUrl(t.storagePath).catch(() => {});
+  }
+}
 
 function fmt(s) {
   if (!isFinite(s)) return '0:00';
@@ -184,11 +209,12 @@ export async function playAt(idx) {
   renderReactionButtons();
   queue.forEach((q, i) => q.li?.classList.toggle('playing', i === cursor));
   try {
-    const url = await getDownloadURL(storageRef(storage, t.storagePath));
+    const url = await resolveAudioUrl(t.storagePath);
     audio.src = url;
     await audio.play();
     updateMediaSession();
     persist();
+    prefetchAhead();
   } catch (err) {
     console.error('playback failed', err);
   }
@@ -241,7 +267,7 @@ async function restoreSession() {
   applyCover(saved.track);
   renderReactionButtons();
   try {
-    const url = await getDownloadURL(storageRef(storage, saved.track.storagePath));
+    const url = await resolveAudioUrl(saved.track.storagePath);
     audio.src = url;
     audio.currentTime = saved.position || 0;
     if (!saved.paused) await audio.play();
