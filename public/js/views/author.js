@@ -68,6 +68,7 @@ export async function mount(el, { params }) {
         </div>
       </header>
 
+      <div class="chip-row" id="seasonChips"></div>
       <div class="shuffle-row" id="authorShuffleRow"></div>
 
       <section class="section">
@@ -117,16 +118,91 @@ export async function mount(el, { params }) {
     : '';
   el.querySelector('#empty').hidden = comps.length > 0;
 
-  if (totalTracks > 0) {
+  // Distinct (season, year) buckets for this author, sorted by year desc then
+  // by season (Été before Noël within a year).
+  const seasonLabel = { ete: 'Été', noel: 'Noël' };
+  const seasonOrder = { ete: 0, noel: 1 };
+  const buckets = [];
+  const seenKeys = new Set();
+  comps.forEach((c) => {
+    const key = `${c.season || 'other'}-${c.year || ''}`;
+    if (seenKeys.has(key)) return;
+    seenKeys.add(key);
+    buckets.push({ key, season: c.season, year: c.year });
+  });
+  buckets.sort((a, b) => {
+    if (a.year !== b.year) return (b.year || 0) - (a.year || 0);
+    return (seasonOrder[a.season] ?? 9) - (seasonOrder[b.season] ?? 9);
+  });
+
+  let filterKey = null;
+  const compsForFilter = (k) => k
+    ? comps.filter((c) => `${c.season || 'other'}-${c.year || ''}` === k)
+    : comps;
+  const tracksForFilter = (k) => {
+    const ids = new Set(compsForFilter(k).map((c) => c.id));
+    return allSongs()
+      .filter((s) => ids.has(s.compilationId))
+      .map((s) => trackFromSongId(s.id))
+      .filter(Boolean);
+  };
+
+  function renderChips() {
+    const chips = el.querySelector('#seasonChips');
+    chips.innerHTML = '';
+    const mkChip = (label, key) => {
+      const a = document.createElement('a');
+      a.className = 'chip' + (filterKey === key ? ' active' : '');
+      a.href = '#';
+      a.textContent = label;
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        filterKey = key;
+        renderChips();
+        renderShuffle();
+        renderCompilationsGrid(el.querySelector('#years'), compsForFilter(filterKey));
+      });
+      return a;
+    };
+    if (buckets.length === 0) return;
+    chips.appendChild(mkChip('Tout', null));
+    buckets.forEach((b) => {
+      const label = `${seasonLabel[b.season] || ''} ${b.year || ''}`.trim();
+      chips.appendChild(mkChip(label, b.key));
+    });
+  }
+
+  function renderShuffle() {
     const shuffleRow = el.querySelector('#authorShuffleRow');
+    shuffleRow.innerHTML = '';
+    const tracks = tracksForFilter(filterKey);
+    if (tracks.length === 0) return;
     const btn = document.createElement('button');
     btn.className = 'shuffle-btn';
-    btn.innerHTML = `🔀 Tout en aléatoire`;
+    const scope = filterKey
+      ? buckets.find((b) => b.key === filterKey)
+      : null;
+    const scopeLabel = scope ? `${seasonLabel[scope.season] || ''} ${scope.year || ''}`.trim() : '';
+    btn.innerHTML = scope
+      ? `🔀 ${escape(scopeLabel)} en aléatoire`
+      : `🔀 Tout en aléatoire`;
     btn.addEventListener('click', () => {
-      playQueue(queueAuthor(emailKey), { sourceLabel: `Chez ${displayName} en aléatoire` });
+      // Reuse queueAuthor when no filter; otherwise build from our filtered list
+      // (already shuffled-randomly via shuffleArr below).
+      const shuffled = scope
+        ? tracks.slice().sort(() => Math.random() - 0.5)
+        : queueAuthor(emailKey);
+      playQueue(shuffled, {
+        sourceLabel: scope
+          ? `${scopeLabel} chez ${displayName} en aléatoire`
+          : `Chez ${displayName} en aléatoire`,
+      });
     });
     shuffleRow.appendChild(btn);
   }
+
+  renderChips();
+  renderShuffle();
   renderCompilationsGrid(el.querySelector('#years'), comps);
 
   function renderReactions() {
@@ -214,6 +290,7 @@ export async function mount(el, { params }) {
 }
 
 function renderCompilationsGrid(yearsEl, comps) {
+  yearsEl.innerHTML = '';
   const byYear = new Map();
   for (const c of comps) {
     const y = c.year || new Date(c.createdAt?.toMillis?.() || Date.now()).getFullYear();
