@@ -1,4 +1,4 @@
-// Per-user song reactions (❤️ like / 💩 dislike).
+// Per-user song reactions (❤️ like / 😬 dislike).
 //
 // Data model: /users/{emailLower}/reactions/{songId} { value: 'like'|'dislike', at }
 //

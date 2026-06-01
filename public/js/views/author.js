@@ -1,13 +1,8 @@
-// Author profile view at /author/:email.
+// Author profile view at /author/:slug.
 //
-// Renders the public profile for any author: their avatar + displayName, their
-// compilations grouped by year+season, and the viewer's own ❤️ / 💩 reactions
-// on songs belonging to those compilations. Same shape whether you're looking
-// at yourself or another user.
-//
-// Author identity is the lowercased email (same id as /users, /allowlist,
-// /admins). If a /users doc with a matching email exists, we surface its
-// displayName and avatar; otherwise we fall back to the email's local-part.
+// `:slug` is a slugified displayName (or an 8-char hash of the email when no
+// displayName exists yet) — emails never appear in URLs. We reverse-lookup the
+// real author email by walking the loaded compilations.
 
 import { storage } from '../firebase-init.js';
 import {
@@ -18,6 +13,7 @@ import {
   allCompilations,
   allSongs,
   displayNameFor,
+  emailFromAuthorSlug,
   getUser,
   trackFromSongId,
 } from '../catalog.js';
@@ -38,7 +34,16 @@ function escape(s) {
 }
 
 export async function mount(el, { params }) {
-  const emailKey = (params.name || '').toLowerCase();
+  const slug = (params.name || '').toLowerCase();
+  const emailKey = emailFromAuthorSlug(slug);
+  if (!emailKey) {
+    el.innerHTML = `
+      <div class="shell">
+        <div class="notice">Auteur introuvable.</div>
+      </div>
+    `;
+    return;
+  }
   const userDoc = getUser(emailKey);
   const displayName = displayNameFor(emailKey);
   const comps = allCompilations()
@@ -67,7 +72,7 @@ export async function mount(el, { params }) {
       <section class="section">
         <h3>Mes réactions sur ses morceaux <span id="rxCount" class="eyebrow" style="float:right"></span></h3>
         <p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 16px;">
-          Tes ❤️ et 💩 sur les morceaux issus de ses compilations.
+          Tes ❤️ et 😬 sur les morceaux issus de ses compilations.
         </p>
         <ul id="rxList" class="likes-list"></ul>
         <div id="rxEmpty" class="notice" hidden>Aucune réaction sur ses morceaux pour l'instant.</div>
@@ -124,7 +129,7 @@ export async function mount(el, { params }) {
           <div class="title">${escape(t.title)}</div>
           <div class="artist">${escape(t.artist)} ${t.compilationId ? `· <a href="/c/${t.compilationId}">${escape(t.compilationTitle)}</a>` : ''}</div>
         </div>
-        <button class="lk-rx" title="${isLike ? 'Retirer le ❤️' : 'Retirer le 💩'}" aria-label="Retirer">${isLike ? '❤️' : '💩'}</button>
+        <button class="lk-rx" title="${isLike ? 'Retirer le ❤️' : 'Retirer le 😬'}" aria-label="Retirer">${isLike ? '❤️' : '😬'}</button>
       `;
       li.querySelector('.lk-play').addEventListener('click', () => {
         if (isLike && playableLikes.length > 0) {

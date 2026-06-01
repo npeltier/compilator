@@ -1,9 +1,9 @@
 // Home view: next-slot banner, author chips, cover grid grouped by year+season,
-// plus the cross-compilation shuffle buttons (Tout / Sauf 💩 / Mes ❤️).
+// plus the cross-compilation shuffle buttons (Tout / Sauf � / Mes ❤️).
 
 import { auth, db, storage } from '../firebase-init.js';
 import { nextCompilationSlot, slotLabel, deadlineLabel } from '../slot.js';
-import { allCompilations, displayNameFor } from '../catalog.js';
+import { allCompilations, authorSlug, displayNameFor } from '../catalog.js';
 import { likeCount } from '../reactions.js';
 import {
   queueAllSongs,
@@ -87,7 +87,7 @@ export async function mount(el, { query }) {
   const shuffleRow = el.querySelector('#shuffleRow');
   const buttons = [
     { id: 'sh-all', label: '🔀 Tout en aléatoire', show: comps.length > 0, fn: () => playQueue(queueAllSongs(), { sourceLabel: 'Tout en aléatoire' }) },
-    { id: 'sh-clean', label: '<span class="poop-faded">💩</span> Tout sauf les 💩', show: comps.length > 0, fn: () => playQueue(queueAllExceptDisliked(), { sourceLabel: 'Tout sauf les 💩' }) },
+    { id: 'sh-clean', label: 'Tout sauf les 😬', show: comps.length > 0, fn: () => playQueue(queueAllExceptDisliked(), { sourceLabel: 'Tout sauf les �' }) },
     { id: 'sh-liked', label: '❤️ Mes coups de cœur', show: likeCount() > 0, fn: () => playQueue(queueLikedSongs(), { sourceLabel: 'Mes coups de cœur' }) },
   ];
   for (const b of buttons) {
@@ -116,7 +116,7 @@ export async function mount(el, { query }) {
   authorEmails.forEach((email) => chipsEl.appendChild(mkChip({
     label: displayNameFor(email),
     active: email === filterAuthor,
-    href: `/author/${encodeURIComponent(email)}`,
+    href: `/author/${authorSlug(email)}`,
     avatarEmail: email,
   })));
 
@@ -176,7 +176,7 @@ export async function mount(el, { query }) {
             <div class="art ${c.coverPath ? '' : 'placeholder'}">${c.coverPath ? '' : firstChar}</div>
             <div class="title">${escape(c.title)}</div>
           </a>
-          <a class="cover-card-author" href="/author/${encodeURIComponent(c.author || '')}">
+          <a class="cover-card-author" href="/author/${authorSlug(c.author)}">
             ${avatarHTML(c.author, { size: 'xs' })}
             <span class="author">${escape(displayNameFor(c.author))}</span>
           </a>

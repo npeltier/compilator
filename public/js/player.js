@@ -75,7 +75,7 @@ export function initPlayer() {
     </div>
     <div class="pb-right">
       <button class="icon react" id="pb-like" title="J'aime" aria-label="J'aime">🤍</button>
-      <button class="icon react" id="pb-dislike" title="Je n'aime pas" aria-label="Je n'aime pas">💩</button>
+      <button class="icon react" id="pb-dislike" title="Je n'aime pas" aria-label="Je n'aime pas">😬</button>
       <button class="btn-ghost" id="pb-stop">Arrêter</button>
     </div>
   `;

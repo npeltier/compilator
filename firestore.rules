@@ -53,7 +53,7 @@ service cloud.firestore {
                        .hasOnly(['displayName', 'avatarPath', 'updatedAt']);
       allow delete: if false;
 
-      // Per-user reactions (❤️ like / 💩 dislike) on songs. Only the owning user
+      // Per-user reactions (❤️ like / 😬 dislike) on songs. Only the owning user
       // can read or write their own reactions.
       match /reactions/{songId} {
         allow read, write: if isSignedIn() && callerEmail() == email;

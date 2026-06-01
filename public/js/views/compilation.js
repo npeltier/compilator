@@ -1,4 +1,4 @@
-// Compilation view: cover hero, ordered song list with ❤️/💩 buttons per row.
+// Compilation view: cover hero, ordered song list with ❤️/😬 buttons per row.
 // Authors and admins also get an inline "✏ Modifier" mode that exposes
 // drag-to-reorder, title/artist editing, audio re-upload, and song deletion,
 // plus a "🗑 Supprimer la compilation" button.
@@ -27,6 +27,7 @@ import {
 } from '../reactions.js';
 import {
   allAuthorOptions,
+  authorSlug,
   displayNameFor,
   getCompilation,
 } from '../catalog.js';
@@ -112,7 +113,7 @@ export async function mount(el, { params }) {
         <div class="meta">
           <p class="eyebrow">${comp.season === 'noel' ? '❄ Noël' : '☀ Été'} ${comp.year || ''}</p>
           <h1>${escape(liveCompTitle)}</h1>
-          <div class="by">par <a class="by-link" href="/author/${encodeURIComponent(comp.author)}">${avatarHTML(comp.author, { size: 'sm' })}<span>${escape(displayNameFor(comp.author))}</span></a></div>
+          <div class="by">par <a class="by-link" href="/author/${authorSlug(comp.author)}">${avatarHTML(comp.author, { size: 'sm' })}<span>${escape(displayNameFor(comp.author))}</span></a></div>
           <div class="stats">${songs.length} morceau${songs.length > 1 ? 'x' : ''} · ${fmt(totalDur)}</div>
           <div class="actions">
             <button class="btn-accent" id="playAll">▶ Tout écouter</button>
@@ -137,7 +138,7 @@ export async function mount(el, { params }) {
         </div>
         <div class="tk-react">
           <button class="rx-like" title="J'aime" aria-label="J'aime">🤍</button>
-          <button class="rx-dis" title="Je n'aime pas" aria-label="Je n'aime pas">💩</button>
+          <button class="rx-dis" title="Je n'aime pas" aria-label="Je n'aime pas">😬</button>
         </div>
         <span class="dur">${fmt(t.duration)}</span>
       `;

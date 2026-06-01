@@ -22,7 +22,7 @@ export function queueAllSongs() {
   return shuffle(allSongs().map((s) => trackFromSongId(s.id)).filter(Boolean));
 }
 
-// "Sauf les 💩" — every song minus the user's disliked ones.
+// "Sauf les 😬" — every song minus the user's disliked ones.
 export function queueAllExceptDisliked() {
   const skip = new Set(dislikedSongIds());
   return shuffle(

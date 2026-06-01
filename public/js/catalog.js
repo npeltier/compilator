@@ -77,6 +77,53 @@ export function displayNameFor(email) {
   return email.split('@')[0];
 }
 
+// Build the URL slug used in /author/:slug links. Prefer a slugified version
+// of the author's displayName so the URL is human-readable; fall back to an
+// 8-char FNV-1a hash of the email when no displayName exists yet (avoids ever
+// surfacing raw emails in URLs).
+//
+// NB: a displayName change rewrites the slug — old bookmarks break. Accepted
+// tradeoff vs leaking emails.
+export function authorSlug(email) {
+  if (!email) return '';
+  const u = usersByEmail.get(email.toLowerCase());
+  const slug = slugify(u?.displayName || '');
+  return slug || fnv1aHex(email.toLowerCase());
+}
+
+// Reverse lookup: given a /author/:slug param, find the matching author email
+// by scanning the distinct authors of the currently loaded compilations.
+// Returns null if no compilation's author matches.
+export function emailFromAuthorSlug(slug) {
+  if (!slug) return null;
+  const wanted = String(slug).toLowerCase();
+  const seen = new Set();
+  for (const c of compilationsById.values()) {
+    if (!c.author || seen.has(c.author)) continue;
+    seen.add(c.author);
+    if (authorSlug(c.author) === wanted) return c.author;
+  }
+  return null;
+}
+
+function slugify(name) {
+  return (name || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function fnv1aHex(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
 // Admin-only: load every /allowlist entry so the "assign author" dropdowns can
 // include friends who haven't signed in yet. Rules block non-admin reads.
 export async function loadAllowlist() {

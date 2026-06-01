@@ -531,7 +531,6 @@ body.has-player { padding-bottom: 100px; }
 }
 .shuffle-btn:hover { border-color: var(--accent); background: var(--bg-elev-2); }
 .shuffle-btn:active { transform: translateY(1px); }
-.shuffle-btn .poop-faded { filter: grayscale(1); opacity: 0.4; }
 
 /* Per-season shuffle button in section headers */
 .season-block header .season-shuffle {
