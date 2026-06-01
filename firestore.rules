@@ -53,10 +53,14 @@ service cloud.firestore {
                        .hasOnly(['displayName', 'avatarPath', 'updatedAt']);
       allow delete: if false;
 
-      // Per-user reactions (❤️ like / 😬 dislike) on songs. Only the owning user
-      // can read or write their own reactions.
+      // Per-user reactions (❤️ like / 😬 dislike) on songs. Any allowlisted
+      // user can read them so the author-profile page can surface "ses coups
+      // de cœur"; only the owning user can write their own reactions. The UI
+      // hides others' dislikes — anyone querying Firestore directly could
+      // still see them, but this is a friends-only site, accepted tradeoff.
       match /reactions/{songId} {
-        allow read, write: if isSignedIn() && callerEmail() == email;
+        allow read: if isAllowlisted();
+        allow write: if isSignedIn() && callerEmail() == email;
       }
     }
 

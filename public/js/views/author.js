@@ -4,7 +4,11 @@
 // displayName exists yet) — emails never appear in URLs. We reverse-lookup the
 // real author email by walking the loaded compilations.
 
-import { storage } from '../firebase-init.js';
+import { db, storage } from '../firebase-init.js';
+import {
+  collection,
+  getDocs,
+} from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
 import {
   ref as storageRef,
   getDownloadURL,
@@ -70,6 +74,15 @@ export async function mount(el, { params }) {
         <h3>Compilations <span id="compCount" class="eyebrow" style="float:right"></span></h3>
         <div id="empty" class="notice" hidden>Aucune compilation pour cet auteur.</div>
         <div id="years"></div>
+      </section>
+
+      <section class="section">
+        <h3>Ses coups de cœur <span id="hisLikesCount" class="eyebrow" style="float:right"></span></h3>
+        <p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 16px;">
+          Les morceaux qu'il a aimés, n'importe où dans le catalogue.
+        </p>
+        <ul id="hisLikesList" class="likes-list"></ul>
+        <div id="hisLikesEmpty" class="notice" hidden>Pas encore de coups de cœur.</div>
       </section>
 
       <section class="section">
@@ -162,6 +175,40 @@ export async function mount(el, { params }) {
   }
   renderReactions();
   const unsub = onReactionChange(renderReactions);
+
+  // Fetch the author's own ❤️ likes (rules let any allowlisted user read
+  // others' reactions; we only display likes, not dislikes).
+  renderHisLikes().catch((err) => console.warn('hisLikes fetch failed', err));
+
+  async function renderHisLikes() {
+    const listEl = el.querySelector('#hisLikesList');
+    const emptyEl = el.querySelector('#hisLikesEmpty');
+    const countEl = el.querySelector('#hisLikesCount');
+    const snap = await getDocs(collection(db, 'users', emailKey, 'reactions'));
+    const likedIds = [];
+    snap.forEach((d) => { if (d.data().value === 'like') likedIds.push(d.id); });
+
+    // Resolve to playable tracks, skipping any orphans (song no longer in catalog).
+    const tracks = likedIds.map((id) => trackFromSongId(id)).filter(Boolean);
+    countEl.textContent = tracks.length ? `${tracks.length} morceau${tracks.length > 1 ? 'x' : ''}` : '';
+    emptyEl.hidden = tracks.length > 0;
+    listEl.innerHTML = '';
+    tracks.forEach((t, i) => {
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <button class="lk-play" title="Jouer à partir d'ici">▶</button>
+        <div class="lk-meta">
+          <div class="title">${escape(t.title)}</div>
+          <div class="artist">${escape(t.artist)} ${t.compilationId ? `· <a href="/c/${t.compilationId}">${escape(t.compilationTitle)}</a>` : ''}</div>
+        </div>
+        <span class="dur">❤️</span>
+      `;
+      li.querySelector('.lk-play').addEventListener('click', () => {
+        playQueue(tracks, { startIndex: i, sourceLabel: `Coups de cœur de ${displayName}` });
+      });
+      listEl.appendChild(li);
+    });
+  }
 
   return () => unsub();
 }
