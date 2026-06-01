@@ -54,3 +54,17 @@ export function queueSeasonYear(season, year) {
     .filter(Boolean);
   return shuffle(tracks);
 }
+
+// "Tout chez {auteur} en aléatoire" — every song from compilations authored by
+// the given email, shuffled.
+export function queueAuthor(authorEmail) {
+  const key = (authorEmail || '').toLowerCase();
+  const compIds = new Set(
+    allCompilations().filter((c) => c.author === key).map((c) => c.id),
+  );
+  const tracks = allSongs()
+    .filter((s) => compIds.has(s.compilationId))
+    .map((s) => trackFromSongId(s.id))
+    .filter(Boolean);
+  return shuffle(tracks);
+}

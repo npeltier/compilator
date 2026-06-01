@@ -25,6 +25,7 @@ import {
   toggleLike,
 } from '../reactions.js';
 import { playQueue } from '../player.js';
+import { queueAuthor } from '../shuffle.js';
 import { avatarUrl } from '../avatar.js';
 
 function escape(s) {
@@ -63,6 +64,8 @@ export async function mount(el, { params }) {
         </div>
       </header>
 
+      <div class="shuffle-row" id="authorShuffleRow"></div>
+
       <section class="section">
         <h3>Compilations <span id="compCount" class="eyebrow" style="float:right"></span></h3>
         <div id="empty" class="notice" hidden>Aucune compilation pour cet auteur.</div>
@@ -100,6 +103,17 @@ export async function mount(el, { params }) {
     ? `${comps.length} ${comps.length > 1 ? 'titres' : 'titre'}`
     : '';
   el.querySelector('#empty').hidden = comps.length > 0;
+
+  if (totalTracks > 0) {
+    const shuffleRow = el.querySelector('#authorShuffleRow');
+    const btn = document.createElement('button');
+    btn.className = 'shuffle-btn';
+    btn.innerHTML = `🔀 Tout en aléatoire`;
+    btn.addEventListener('click', () => {
+      playQueue(queueAuthor(emailKey), { sourceLabel: `Chez ${displayName} en aléatoire` });
+    });
+    shuffleRow.appendChild(btn);
+  }
   renderCompilationsGrid(el.querySelector('#years'), comps);
 
   function renderReactions() {
