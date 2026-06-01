@@ -31,6 +31,7 @@ export async function mount(el, { query }) {
       <div id="nextBanner"></div>
       <div class="shuffle-row" id="shuffleRow"></div>
       <div class="chip-row" id="authorChips"></div>
+      <div class="chip-row" id="seasonChips"></div>
       <div id="empty" class="notice" hidden>Aucune compilation pour l'instant. <a href="/upload">Crée la première</a>.</div>
       <div id="years"></div>
     </div>
@@ -123,74 +124,129 @@ export async function mount(el, { query }) {
   const shown = filterAuthor ? comps.filter((c) => c.author === filterAuthor) : comps;
   el.querySelector('#empty').hidden = shown.length > 0;
 
-  // ---- Group by year, then season within year ----
-  const byYear = new Map();
+  // ---- Season+year filter chips ----
+  // Buckets are computed from `shown` so they intersect with the author filter:
+  // narrowing to one author only offers that author's seasons/years.
+  const seasonLabel = { ete: 'Été', noel: 'Noël' };
+  const seasonOrder = { ete: 0, noel: 1 };
+  const buckets = [];
+  const seenKeys = new Set();
   for (const c of shown) {
     const y = c.year || new Date(c.createdAt?.toMillis?.() || Date.now()).getFullYear();
-    if (!byYear.has(y)) byYear.set(y, []);
-    byYear.get(y).push(c);
+    const key = `${c.season || 'other'}-${y}`;
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    buckets.push({ key, season: c.season || 'other', year: y });
   }
-  const yearsSorted = [...byYear.keys()].sort((a, b) => b - a);
+  buckets.sort((a, b) => {
+    if (a.year !== b.year) return (b.year || 0) - (a.year || 0);
+    return (seasonOrder[a.season] ?? 9) - (seasonOrder[b.season] ?? 9);
+  });
+
+  let filterKey = null;
+  const matchesFilter = (c) => {
+    if (!filterKey) return true;
+    const y = c.year || new Date(c.createdAt?.toMillis?.() || Date.now()).getFullYear();
+    return `${c.season || 'other'}-${y}` === filterKey;
+  };
+
+  const seasonChipsEl = el.querySelector('#seasonChips');
   const yearsEl = el.querySelector('#years');
-  const seasonLabel = { ete: 'Été', noel: 'Noël' };
 
-  for (const y of yearsSorted) {
-    const groups = byYear.get(y);
-    const winter = groups.filter((c) => c.season === 'noel');
-    const summer = groups.filter((c) => c.season === 'ete');
-    const other = groups.filter((c) => c.season !== 'ete' && c.season !== 'noel');
-    for (const [seasonKey, list] of [['noel', winter], ['ete', summer], ['other', other]]) {
-      if (list.length === 0) continue;
-      const block = document.createElement('section');
-      block.className = `season-block ${seasonKey === 'noel' ? 'winter' : seasonKey === 'ete' ? 'summer' : ''}`;
-      const labelTxt = `${seasonLabel[seasonKey] || ''} ${y}`;
-      block.innerHTML = `
-        <header>
-          <h2>${labelTxt}</h2>
-          <span class="count">${list.length} compilation${list.length > 1 ? 's' : ''}</span>
-          ${seasonKey === 'ete' || seasonKey === 'noel'
-            ? `<button class="season-shuffle" title="Aléatoire ${labelTxt}" data-season="${seasonKey}" data-year="${y}">🔀</button>`
-            : ''}
-        </header>
-        <div class="cover-grid"></div>
-      `;
-      const sb = block.querySelector('.season-shuffle');
-      if (sb) {
-        sb.addEventListener('click', async () => {
-          sb.disabled = true;
-          try {
-            const queue = await queueSeasonYear(seasonKey, y);
-            playQueue(queue, { sourceLabel: `${labelTxt} en aléatoire` });
-          } finally {
-            sb.disabled = false;
-          }
-        });
-      }
-      const grid = block.querySelector('.cover-grid');
-      for (const c of list) {
-        const card = document.createElement('div');
-        card.className = 'cover-card';
-        const firstChar = (c.title || '?')[0].toUpperCase();
-        card.innerHTML = `
-          <a class="cover-card-art" href="/c/${c.id}">
-            <div class="art ${c.coverPath ? '' : 'placeholder'}">${c.coverPath ? '' : firstChar}</div>
-            <div class="title">${escape(c.title)}</div>
-          </a>
-          <a class="cover-card-author" href="/author/${authorSlug(c.author)}">
-            ${avatarHTML(c.author, { size: 'xs' })}
-            <span class="author">${escape(displayNameFor(c.author))}</span>
-          </a>
-        `;
-        grid.appendChild(card);
-        if (c.coverPath) {
-          getDownloadURL(storageRef(storage, c.coverPath))
-            .then((url) => { card.querySelector('.art').style.backgroundImage = `url(${url})`; })
-            .catch(() => {});
-        }
-      }
-      yearsEl.appendChild(block);
-    }
+  function renderSeasonChips() {
+    seasonChipsEl.innerHTML = '';
+    if (buckets.length < 2) return; // single bucket: nothing to filter
+    const mkChip = (label, key) => {
+      const a = document.createElement('a');
+      a.className = 'chip' + (filterKey === key ? ' active' : '');
+      a.href = '#';
+      a.textContent = label;
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        filterKey = key;
+        renderSeasonChips();
+        renderGroups();
+      });
+      return a;
+    };
+    seasonChipsEl.appendChild(mkChip('Tout', null));
+    buckets.forEach((b) => {
+      const lbl = `${seasonLabel[b.season] || b.season} ${b.year}`;
+      seasonChipsEl.appendChild(mkChip(lbl, b.key));
+    });
   }
 
-  paintAvatars(el);
+  function renderGroups() {
+    yearsEl.innerHTML = '';
+    const filtered = shown.filter(matchesFilter);
+    const byYear = new Map();
+    for (const c of filtered) {
+      const y = c.year || new Date(c.createdAt?.toMillis?.() || Date.now()).getFullYear();
+      if (!byYear.has(y)) byYear.set(y, []);
+      byYear.get(y).push(c);
+    }
+    const yearsSorted = [...byYear.keys()].sort((a, b) => b - a);
+
+    for (const y of yearsSorted) {
+      const groups = byYear.get(y);
+      const winter = groups.filter((c) => c.season === 'noel');
+      const summer = groups.filter((c) => c.season === 'ete');
+      const other = groups.filter((c) => c.season !== 'ete' && c.season !== 'noel');
+      for (const [seasonKey, list] of [['noel', winter], ['ete', summer], ['other', other]]) {
+        if (list.length === 0) continue;
+        const block = document.createElement('section');
+        block.className = `season-block ${seasonKey === 'noel' ? 'winter' : seasonKey === 'ete' ? 'summer' : ''}`;
+        const labelTxt = `${seasonLabel[seasonKey] || ''} ${y}`;
+        block.innerHTML = `
+          <header>
+            <h2>${labelTxt}</h2>
+            <span class="count">${list.length} compilation${list.length > 1 ? 's' : ''}</span>
+            ${seasonKey === 'ete' || seasonKey === 'noel'
+              ? `<button class="season-shuffle" title="Aléatoire ${labelTxt}" data-season="${seasonKey}" data-year="${y}">🔀</button>`
+              : ''}
+          </header>
+          <div class="cover-grid"></div>
+        `;
+        const sb = block.querySelector('.season-shuffle');
+        if (sb) {
+          sb.addEventListener('click', async () => {
+            sb.disabled = true;
+            try {
+              const queue = await queueSeasonYear(seasonKey, y);
+              playQueue(queue, { sourceLabel: `${labelTxt} en aléatoire` });
+            } finally {
+              sb.disabled = false;
+            }
+          });
+        }
+        const grid = block.querySelector('.cover-grid');
+        for (const c of list) {
+          const card = document.createElement('div');
+          card.className = 'cover-card';
+          const firstChar = (c.title || '?')[0].toUpperCase();
+          card.innerHTML = `
+            <a class="cover-card-art" href="/c/${c.id}">
+              <div class="art ${c.coverPath ? '' : 'placeholder'}">${c.coverPath ? '' : firstChar}</div>
+              <div class="title">${escape(c.title)}</div>
+            </a>
+            <a class="cover-card-author" href="/author/${authorSlug(c.author)}">
+              ${avatarHTML(c.author, { size: 'xs' })}
+              <span class="author">${escape(displayNameFor(c.author))}</span>
+            </a>
+          `;
+          grid.appendChild(card);
+          if (c.coverPath) {
+            getDownloadURL(storageRef(storage, c.coverPath))
+              .then((url) => { card.querySelector('.art').style.backgroundImage = `url(${url})`; })
+              .catch(() => {});
+          }
+        }
+        yearsEl.appendChild(block);
+      }
+    }
+    paintAvatars(el);
+  }
+
+  renderSeasonChips();
+  renderGroups();
 }
