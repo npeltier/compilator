@@ -18,6 +18,8 @@ const processSongFn = httpsCallable(functions, 'processSong');
 const uploadCoverFn = httpsCallable(functions, 'uploadCover');
 const replaceSongFn = httpsCallable(functions, 'replaceSong');
 const deleteCompilationFn = httpsCallable(functions, 'deleteCompilation');
+const upsertUserFn = httpsCallable(functions, 'upsertUser');
+const removeUserFn = httpsCallable(functions, 'removeUser');
 
 function uuid() {
   return crypto.randomUUID ? crypto.randomUUID()
@@ -114,6 +116,24 @@ export async function replaceSongBinary({ file, compilationId, songId, onProgres
  */
 export async function deleteCompilation(compilationId) {
   const { data } = await deleteCompilationFn({ compilationId });
+  return data;
+}
+
+/**
+ * Admin-only. Adds an email to /allowlist and optionally seeds /users/{email}
+ * with a displayName so authored content shows the right name immediately.
+ */
+export async function upsertUser({ email, displayName }) {
+  const { data } = await upsertUserFn({ email, displayName });
+  return data;
+}
+
+/**
+ * Admin-only. Removes /allowlist/{email} and /users/{email}. Firebase Auth
+ * record is untouched.
+ */
+export async function removeUser(email) {
+  const { data } = await removeUserFn({ email });
   return data;
 }
 

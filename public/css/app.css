@@ -573,6 +573,38 @@ body.has-player { padding-bottom: 100px; }
 .likes-list .lk-play:hover { border-color: var(--accent); color: var(--accent); background: transparent; }
 .likes-list .lk-unlike:hover { background: transparent; }
 
+/* -------- users admin list -------- */
+.user-admin-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.user-admin-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.user-admin-row .ua-name { font-family: var(--display); font-size: 16px; letter-spacing: 0.03em; }
+.user-admin-row .ua-email { font-size: 12px; color: var(--ink-dim); font-style: italic; }
+.user-admin-row .ua-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-style: italic;
+  color: var(--ink-faint);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.user-admin-row .ua-actions { display: flex; gap: 8px; }
+.user-admin-row .ua-actions .btn-ghost { padding: 6px 10px; font-size: 13px; }
+.btn-ghost.danger { color: var(--accent); border-color: var(--accent); }
+.btn-ghost.danger:hover { color: var(--accent); border-color: var(--accent); background: rgba(255, 90, 75, 0.08); }
+
 /* -------- migrate page (formerly inline in migrate.html) -------- */
 .zip-card {
   border: 1px solid var(--line);

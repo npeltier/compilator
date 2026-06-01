@@ -8,6 +8,7 @@ import {
   replaceSongFromStaging,
   uploadCoverFromStaging,
 } from './processing.js';
+import { FieldValue } from 'firebase-admin/firestore';
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -122,6 +123,62 @@ export const deleteCompilation = onCall({ memory: '512MiB', timeoutSeconds: 300 
     console.error('deleteCompilation error', err);
     throw new HttpsError('internal', err.message || 'Failed to delete compilation.');
   }
+});
+
+/**
+ * upsertUser({ email, displayName? })
+ *
+ * Admin-only. Creates /allowlist/{email} so the user can sign in, and optionally
+ * seeds /users/{email} with a displayName so authored content shows the right
+ * name even before the user signs in for the first time.
+ */
+export const upsertUser = onCall({ memory: '256MiB', timeoutSeconds: 30 }, async (req) => {
+  const { email: callerEmail } = await requireAllowlistedCaller(req.auth);
+  if (!(await isAdminEmail(callerEmail))) {
+    throw new HttpsError('permission-denied', 'Admin only.');
+  }
+  const { email, displayName } = req.data || {};
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    throw new HttpsError('invalid-argument', 'A valid email is required.');
+  }
+  const key = email.toLowerCase().trim();
+  const db = admin.firestore();
+  await db.collection('allowlist').doc(key).set({
+    email: key,
+    addedBy: callerEmail,
+    addedAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
+  const trimmed = (displayName || '').trim();
+  if (trimmed) {
+    await db.collection('users').doc(key).set({
+      displayName: trimmed,
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+  return { email: key, displayName: trimmed || null };
+});
+
+/**
+ * removeUser({ email })
+ *
+ * Admin-only. Removes /allowlist/{email} and /users/{email}. The Firebase Auth
+ * record is NOT touched (you can disable that in the Firebase console if needed).
+ */
+export const removeUser = onCall({ memory: '256MiB', timeoutSeconds: 30 }, async (req) => {
+  const { email: callerEmail } = await requireAllowlistedCaller(req.auth);
+  if (!(await isAdminEmail(callerEmail))) {
+    throw new HttpsError('permission-denied', 'Admin only.');
+  }
+  const { email } = req.data || {};
+  if (!email) throw new HttpsError('invalid-argument', 'email is required.');
+  const key = email.toLowerCase().trim();
+  if (key === callerEmail) {
+    throw new HttpsError('failed-precondition', "You can't remove yourself.");
+  }
+  const db = admin.firestore();
+  await db.collection('allowlist').doc(key).delete();
+  await db.collection('users').doc(key).delete().catch(() => {});
+  return { email: key };
 });
 
 // Staging cleanup of /uploads/** is handled by a Cloud Storage lifecycle rule

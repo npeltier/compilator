@@ -28,6 +28,8 @@
 
     <p class="alt">
       <a href="#" id="toggle">Créer un compte</a>
+      <span style="color:var(--ink-faint);margin:0 8px;">·</span>
+      <a href="#" id="reset">Mot de passe oublié</a>
     </p>
   </main>
 
@@ -38,6 +40,7 @@
       signInWithEmailAndPassword,
       createUserWithEmailAndPassword,
       onAuthStateChanged,
+      sendPasswordResetEmail,
       signOut,
     } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js';
     import { doc, setDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
@@ -73,6 +76,23 @@
       submit.textContent = mode === 'signin' ? 'Se connecter' : 'Créer le compte';
       toggle.textContent = mode === 'signin' ? 'Créer un compte' : 'Déjà inscrit ? Se connecter';
       clearError();
+    });
+
+    document.getElementById('reset').addEventListener('click', async (e) => {
+      e.preventDefault();
+      clearError();
+      const email = document.getElementById('email').value.trim().toLowerCase();
+      if (!email) {
+        showError("Saisis d'abord ton adresse e-mail, puis clique sur « Mot de passe oublié ».");
+        return;
+      }
+      try {
+        await sendPasswordResetEmail(auth, email);
+        noticeEl.textContent = `Un e-mail de réinitialisation a été envoyé à ${email}. Vérifie ta boîte (et les spams).`;
+        noticeEl.hidden = false;
+      } catch (err) {
+        showError(err.message || String(err));
+      }
     });
 
     form.addEventListener('submit', async (e) => {

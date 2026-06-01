@@ -40,6 +40,7 @@ register('/c/:id', () => import('./views/compilation.js'));
 register('/upload', () => import('./views/upload.js'));
 register('/profile', () => import('./views/profile.js'));
 register('/migrate', () => import('./views/migrate.js'));
+register('/users', () => import('./views/users.js'));
 register('/author/:name', () => import('./views/author.js'));
 
 start(document.getElementById('view'));
