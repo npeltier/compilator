@@ -117,7 +117,17 @@ export async function mount(el) {
       renderZips();
       try {
         const z = await JSZip.loadAsync(f);
-        const entries = Object.values(z.files).filter((e) => !e.dir && /\.mp3$/i.test(e.name));
+        const entries = Object.values(z.files).filter((e) => {
+          if (e.dir) return false;
+          if (!/\.mp3$/i.test(e.name)) return false;
+          // Skip macOS metadata noise that piggybacks on ZIPs made on a Mac:
+          //   __MACOSX/<…>     AppleDouble sidecar directory
+          //   …/._<name>.mp3   AppleDouble files (resource forks) next to real files
+          if (e.name.split('/').includes('__MACOSX')) return false;
+          const basename = e.name.split('/').pop();
+          if (basename.startsWith('._')) return false;
+          return true;
+        });
         card.songs = await Promise.all(entries.map(async (entry) => {
           const blob = await entry.async('blob');
           let trackNo = 0; let title = entry.name; let artist = ''; let duration = 0;

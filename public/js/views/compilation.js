@@ -32,7 +32,7 @@ import {
   getCompilation,
 } from '../catalog.js';
 import { isAdminSync } from '../auth-guard.js';
-import { deleteCompilation, replaceSongBinary } from '../upload-pipeline.js';
+import { deleteCompilation, replaceSongBinary, uploadCover } from '../upload-pipeline.js';
 import { navigate } from '../router.js';
 import { avatarHTML, paintAvatars } from '../avatar.js';
 
@@ -221,6 +221,9 @@ export async function mount(el, { params }) {
           <input id="edTitle" value="${escape(editState.title)}">
           ${authorBlock}
           <div class="stats" id="edStats"></div>
+          <div class="actions" style="margin-top:8px;">
+            <button class="btn-ghost" id="changeCoverBtn">🖼 Changer la pochette</button>
+          </div>
           <div class="actions edit-actions">
             <button class="btn-ghost" id="cancelEdit">Annuler</button>
             <button class="btn-accent" id="saveEdit">Enregistrer</button>
@@ -251,6 +254,44 @@ export async function mount(el, { params }) {
     main.querySelector('#cancelEdit').addEventListener('click', () => renderView());
     main.querySelector('#saveEdit').addEventListener('click', () => saveEdit());
     main.querySelector('#deleteCompBtn').addEventListener('click', () => deleteCurrentCompilation());
+    main.querySelector('#changeCoverBtn').addEventListener('click', () => triggerCoverChange());
+  }
+
+  function triggerCoverChange() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      input.remove();
+      if (!file) return;
+      const btn = main.querySelector('#changeCoverBtn');
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Envoi…';
+      try {
+        const result = await uploadCover({ file, compilationId: id });
+        comp.coverPath = result.coverPath;
+        // Repaint hero; cache-bust the URL because the storage path may stay
+        // identical when overwriting the same extension and browsers will keep
+        // the stale image otherwise.
+        const art = main.querySelector('#hero-art');
+        if (art) {
+          art.classList.remove('placeholder');
+          art.textContent = '';
+          const url = await getDownloadURL(storageRef(storage, comp.coverPath));
+          art.style.backgroundImage = `url(${url}#${Date.now()})`;
+        }
+      } catch (err) {
+        showEditError(`Échec du changement de pochette : ${err.message || err}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    });
+    input.click();
   }
 
   function renderEditRows(list) {
