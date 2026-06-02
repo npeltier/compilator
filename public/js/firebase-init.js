@@ -13,6 +13,8 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js';
 import {
   getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
   connectFirestoreEmulator,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
 import {
@@ -43,7 +45,9 @@ const firebaseConfig = IS_LOCAL ? {
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+export const db = IS_LOCAL
+  ? getFirestore(app)
+  : initializeFirestore(app, { localCache: persistentLocalCache() });
 export const storage = getStorage(app);
 export const functions = getFunctions(app);
 
