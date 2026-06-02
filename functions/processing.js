@@ -28,7 +28,7 @@ async function resolveBinaryFromBuffer(buf) {
   const [exists] = await file.exists();
   if (!exists) {
     await file.save(buf, {
-      metadata: { contentType: 'audio/mpeg' },
+      metadata: { contentType: 'audio/mpeg', cacheControl: 'public, max-age=31536000' },
       resumable: false,
     });
   }
@@ -93,7 +93,7 @@ export async function processSongFromStaging({ tempPath, compilationId, order })
       const ext = (pic.format || 'image/jpeg').includes('png') ? 'png' : 'jpg';
       const coverPath = `covers/${compilationId}.${ext}`;
       await bucket.file(coverPath).save(Buffer.from(pic.data), {
-        metadata: { contentType: pic.format || 'image/jpeg' },
+        metadata: { contentType: pic.format || 'image/jpeg', cacheControl: 'public, max-age=31536000' },
         resumable: false,
       });
       await compRef.set({
@@ -133,7 +133,7 @@ export async function uploadCoverFromStaging({ tempPath, compilationId, ext }) {
   const coverPath = `covers/${compilationId}.${safeExt}`;
   const contentType = safeExt === 'png' ? 'image/png' : 'image/jpeg';
   await bucket.file(coverPath).save(buf, {
-    metadata: { contentType },
+    metadata: { contentType, cacheControl: 'public, max-age=31536000' },
     resumable: false,
   });
   await db.collection('compilations').doc(compilationId).set({

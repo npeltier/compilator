@@ -24,6 +24,19 @@ function escape(s) {
   }[c]));
 }
 
+const coverObserver = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    coverObserver.unobserve(entry.target);
+    const path = entry.target.dataset.coverPath;
+    if (path) {
+      getDownloadURL(storageRef(storage, path))
+        .then((url) => { entry.target.style.backgroundImage = `url(${url})`; })
+        .catch(() => {});
+    }
+  }
+}, { rootMargin: '200px' });
+
 export async function mount(el, { query }) {
   const filterAuthor = query.author || null;
   el.innerHTML = `
@@ -236,9 +249,9 @@ export async function mount(el, { query }) {
           `;
           grid.appendChild(card);
           if (c.coverPath) {
-            getDownloadURL(storageRef(storage, c.coverPath))
-              .then((url) => { card.querySelector('.art').style.backgroundImage = `url(${url})`; })
-              .catch(() => {});
+            const art = card.querySelector('.art');
+            art.dataset.coverPath = c.coverPath;
+            coverObserver.observe(art);
           }
         }
         yearsEl.appendChild(block);
