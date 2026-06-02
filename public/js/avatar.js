@@ -11,6 +11,42 @@ import { displayNameFor, getUser } from './catalog.js';
 
 const urlCache = new Map(); // avatarPath → download URL
 
+const LS_KEY = 'avatar_url_cache';
+const TTL_MS = 24 * 60 * 60 * 1000; // 24 h — URLs are signed but long-lived
+
+function lsLoad() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return;
+    const entries = JSON.parse(raw);
+    const now = Date.now();
+    for (const [path, { url, ts }] of Object.entries(entries)) {
+      if (now - ts < TTL_MS) urlCache.set(path, url);
+    }
+  } catch (_) { /* ignore corrupt data */ }
+}
+
+function lsSave(path, url) {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    const entries = raw ? JSON.parse(raw) : {};
+    entries[path] = { url, ts: Date.now() };
+    localStorage.setItem(LS_KEY, JSON.stringify(entries));
+  } catch (_) { /* quota or private-mode — silent */ }
+}
+
+function lsDelete(path) {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return;
+    const entries = JSON.parse(raw);
+    delete entries[path];
+    localStorage.setItem(LS_KEY, JSON.stringify(entries));
+  } catch (_) {}
+}
+
+lsLoad();
+
 function initialOf(name) {
   return (name || '?')[0]?.toUpperCase() || '?';
 }
@@ -42,6 +78,7 @@ export async function paintAvatars(root) {
     getDownloadURL(storageRef(storage, path))
       .then((url) => {
         urlCache.set(path, url);
+        lsSave(path, url);
         el.style.backgroundImage = `url(${url})`;
         el.removeAttribute('data-avatar');
       })
@@ -56,6 +93,7 @@ export async function avatarUrl(path) {
   try {
     const url = await getDownloadURL(storageRef(storage, path));
     urlCache.set(path, url);
+    lsSave(path, url);
     return url;
   } catch (_) {
     return null;
@@ -67,5 +105,5 @@ export async function avatarUrl(path) {
 // a token that changes on overwrite, so without invalidation we'd keep showing
 // the old image.
 export function invalidateAvatar(path) {
-  if (path) urlCache.delete(path);
+  if (path) { urlCache.delete(path); lsDelete(path); }
 }
