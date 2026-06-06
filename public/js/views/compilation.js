@@ -46,7 +46,9 @@ function doubalonChipsHTML(doublons, currentCompId) {
     seenTrack.add(compilationId);
     const comp = getCompilation(compilationId);
     if (!comp) continue;
-    chips.push(`<a class="doublon-chip same-track" href="/compilation/${compilationId}" title="${escape(comp.title)}">doublon</a>`);
+    const fallback = escape((comp.title || '?')[0].toUpperCase());
+    const coverAttr = comp.coverPath ? ` data-cover-path="${escape(comp.coverPath)}"` : '';
+    chips.push(`<a class="doublon-chip same-track" href="/compilation/${compilationId}" title="doublon · ${escape(comp.title)}"><div class="doublon-cover${comp.coverPath ? '' : ' placeholder'}"${coverAttr}>${comp.coverPath ? '' : fallback}</div></a>`);
   }
 
   const seenArtist = new Set();
@@ -55,7 +57,9 @@ function doubalonChipsHTML(doublons, currentCompId) {
     seenArtist.add(compilationId);
     const comp = getCompilation(compilationId);
     if (!comp) continue;
-    chips.push(`<a class="doublon-chip same-artist" href="/compilation/${compilationId}" title="${escape(comp.title)}">doublon d'artiste</a>`);
+    const fallback = escape((comp.title || '?')[0].toUpperCase());
+    const coverAttr = comp.coverPath ? ` data-cover-path="${escape(comp.coverPath)}"` : '';
+    chips.push(`<a class="doublon-chip same-artist" href="/compilation/${compilationId}" title="doublon d'artiste · ${escape(comp.title)}"><div class="doublon-cover${comp.coverPath ? '' : ' placeholder'}"${coverAttr}>${comp.coverPath ? '' : fallback}</div></a>`);
   }
 
   if (!chips.length) return '';
@@ -130,6 +134,16 @@ export async function mount(el, { params }) {
     }
   }
 
+  async function paintDoublonCovers() {
+    const covers = main.querySelectorAll('.doublon-cover[data-cover-path]');
+    await Promise.all([...covers].map(async (el) => {
+      try {
+        const url = await getDownloadURL(storageRef(storage, el.dataset.coverPath));
+        el.style.backgroundImage = `url(${url})`;
+      } catch (_) { /* ignore */ }
+    }));
+  }
+
   function renderView() {
     mode = 'view';
     editState = null;
@@ -187,6 +201,8 @@ export async function mount(el, { params }) {
       t.li = li;
       renderRowReactions(t.songId);
     });
+
+    paintDoublonCovers();
 
     main.querySelector('#playAll').addEventListener('click', () => {
       playQueue(songs, { startIndex: 0, sourceLabel: liveCompTitle });

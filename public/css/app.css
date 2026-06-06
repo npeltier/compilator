@@ -399,11 +399,13 @@ h3 { font-size: 24px; letter-spacing: 0.04em; }
 .tracklist .title { font-family: var(--display); font-size: 19px; letter-spacing: 0.03em; }
 .tracklist .artist { color: var(--ink-dim); font-size: 13px; font-style: italic; }
 .tracklist .dur { color: var(--ink-faint); font-variant-numeric: tabular-nums; font-size: 13px; }
-.tracklist .tk-doublons { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
-.doublon-chip { font-size: 11px; text-decoration: none; border-radius: 3px; padding: 1px 5px; line-height: 1.6; opacity: 0.75; }
+.tracklist .tk-doublons { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+.doublon-chip { display: inline-block; text-decoration: none; border-radius: 3px; opacity: 0.7; }
 .doublon-chip:hover { opacity: 1; }
-.doublon-chip.same-track { color: var(--accent); border: 1px solid var(--accent); }
-.doublon-chip.same-artist { color: var(--ink-dim); border: 1px solid var(--ink-dim); }
+.doublon-cover { width: 20px; height: 20px; border-radius: 3px; background-size: cover; background-position: center; font-size: 9px; display: flex; align-items: center; justify-content: center; }
+.doublon-cover.placeholder { font-weight: 600; }
+.doublon-chip.same-track .doublon-cover { border: 1.5px solid var(--accent); color: var(--accent); }
+.doublon-chip.same-artist .doublon-cover { border: 1.5px solid var(--ink-dim); color: var(--ink-dim); }
 
 /* -------- player bar -------- */
 .player-bar {
