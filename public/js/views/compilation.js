@@ -359,7 +359,7 @@ export async function mount(el, { params }) {
   function triggerReplace(row, li) {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = 'audio/mpeg,.mp3';
+    input.accept = 'audio/mpeg,audio/mp4,audio/flac,audio/aiff,audio/wav,audio/ogg,.mp3,.m4a,.flac,.aiff,.aif,.wav,.ogg';
     input.style.display = 'none';
     document.body.appendChild(input);
     input.addEventListener('change', async () => {

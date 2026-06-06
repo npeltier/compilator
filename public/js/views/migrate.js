@@ -119,10 +119,10 @@ export async function mount(el) {
         const z = await JSZip.loadAsync(f);
         const entries = Object.values(z.files).filter((e) => {
           if (e.dir) return false;
-          if (!/\.mp3$/i.test(e.name)) return false;
+          if (!/\.(mp3|m4a|flac|aiff?|wav|ogg)$/i.test(e.name)) return false;
           // Skip macOS metadata noise that piggybacks on ZIPs made on a Mac:
           //   __MACOSX/<…>     AppleDouble sidecar directory
-          //   …/._<name>.mp3   AppleDouble files (resource forks) next to real files
+          //   …/._<name>.*     AppleDouble files (resource forks) next to real files
           if (e.name.split('/').includes('__MACOSX')) return false;
           const basename = e.name.split('/').pop();
           if (basename.startsWith('._')) return false;
@@ -134,7 +134,7 @@ export async function mount(el) {
           try {
             const meta = await parseBlob(blob, { duration: true });
             trackNo = meta.common.track?.no || 0;
-            title = meta.common.title || entry.name.replace(/\.mp3$/i, '');
+            title = meta.common.title || entry.name.replace(/\.(mp3|m4a|flac|aiff?|wav|ogg)$/i, '');
             artist = meta.common.artist || '';
             duration = meta.format.duration || 0;
           } catch (_) { /* ignore */ }

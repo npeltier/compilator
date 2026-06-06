@@ -40,7 +40,7 @@ export async function uploadSong({ file, compilationId, order, onProgress, filen
   const tempPath = `uploads/${user.uid}/${id}-${safeName}`;
 
   const task = uploadBytesResumable(storageRef(storage, tempPath), file, {
-    contentType: 'audio/mpeg',
+    contentType: file.type || 'audio/mpeg',
   });
 
   await new Promise((resolve, reject) => {
@@ -93,7 +93,7 @@ export async function replaceSongBinary({ file, compilationId, songId, onProgres
   const tempPath = `uploads/${user.uid}/${id}-${safeName}`;
 
   const task = uploadBytesResumable(storageRef(storage, tempPath), file, {
-    contentType: 'audio/mpeg',
+    contentType: file.type || 'audio/mpeg',
   });
   await new Promise((resolve, reject) => {
     task.on('state_changed',

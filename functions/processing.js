@@ -2,12 +2,36 @@ import admin from 'firebase-admin';
 import { getStorage } from 'firebase-admin/storage';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { parseBuffer } from 'music-metadata';
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+import ffmpeg from 'fluent-ffmpeg';
+import { Readable, PassThrough } from 'stream';
 
 import { computeMp3Hash, getStorePath } from './hash.js';
 import { isAdminEmail } from './auth.js';
 
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+
 if (admin.apps.length === 0) {
   admin.initializeApp();
+}
+
+async function transcodeToMp3(buf) {
+  const probe = await parseBuffer(buf);
+  if (probe.format.container === 'MPEG') return buf;
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    const out = new PassThrough();
+    out.on('data', (c) => chunks.push(c));
+    out.on('end', () => resolve(Buffer.concat(chunks)));
+    out.on('error', reject);
+    ffmpeg(Readable.from(buf))
+      .noVideo()
+      .audioCodec('libmp3lame')
+      .audioQuality(2)
+      .format('mp3')
+      .on('error', reject)
+      .pipe(out);
+  });
 }
 
 /**
@@ -18,6 +42,7 @@ if (admin.apps.length === 0) {
  * @returns {Promise<{hash:string, storagePath:string, metadata:object, common:object, format:object}>}
  */
 async function resolveBinaryFromBuffer(buf) {
+  buf = await transcodeToMp3(buf);
   const bucket = getStorage().bucket();
 
   const hash = await computeMp3Hash(buf);

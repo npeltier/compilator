@@ -67,7 +67,7 @@ export async function mount(el) {
         <div id="songsDrop" class="dropzone">
           <div class="big">Déposez les MP3 ici, dans n'importe quel ordre</div>
           <div>ou cliquez pour choisir. Glissez les lignes pour réordonner avant l'envoi.</div>
-          <input type="file" id="songsInput" accept="audio/mpeg,.mp3" multiple hidden>
+          <input type="file" id="songsInput" accept="audio/mpeg,audio/mp4,audio/flac,audio/aiff,audio/wav,audio/ogg,.mp3,.m4a,.flac,.aiff,.aif,.wav,.ogg" multiple hidden>
         </div>
         <ul id="queue" class="queue" style="margin-top:24px;"></ul>
       </section>
@@ -114,7 +114,8 @@ export async function mount(el) {
   songsInput.addEventListener('change', () => addFiles([...songsInput.files]));
 
   async function addFiles(files) {
-    const mp3s = files.filter((f) => f.type === 'audio/mpeg' || f.name.toLowerCase().endsWith('.mp3'));
+    const audioExts = /\.(mp3|m4a|flac|aiff?|wav|ogg)$/i;
+    const mp3s = files.filter((f) => f.type.startsWith('audio/') || audioExts.test(f.name));
     for (const file of mp3s) {
       const item = { file, status: 'pending', progress: 0, title: file.name, artist: '', duration: 0 };
       items.push(item);
