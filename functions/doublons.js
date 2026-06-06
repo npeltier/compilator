@@ -1,5 +1,3 @@
-import { getFirestore } from 'firebase-admin/firestore';
-
 function normalizeArtist(artist) {
   return (artist || '').toLowerCase().trim();
 }

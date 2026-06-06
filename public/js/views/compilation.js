@@ -48,7 +48,7 @@ function doubalonChipsHTML(doublons, currentCompId) {
     if (!comp) continue;
     const fallback = escape((comp.title || '?')[0].toUpperCase());
     const coverAttr = comp.coverPath ? ` data-cover-path="${escape(comp.coverPath)}"` : '';
-    chips.push(`<a class="doublon-chip same-track" href="/compilation/${compilationId}" title="doublon · ${escape(comp.title)}"><div class="doublon-cover${comp.coverPath ? '' : ' placeholder'}"${coverAttr}>${comp.coverPath ? '' : fallback}</div></a>`);
+    chips.push(`<a class="doublon-chip same-track" href="/c/${compilationId}" title="doublon · ${escape(comp.title)}"><div class="doublon-cover${comp.coverPath ? '' : ' placeholder'}"${coverAttr}>${comp.coverPath ? '' : fallback}</div></a>`);
   }
 
   const seenArtist = new Set();
@@ -59,7 +59,7 @@ function doubalonChipsHTML(doublons, currentCompId) {
     if (!comp) continue;
     const fallback = escape((comp.title || '?')[0].toUpperCase());
     const coverAttr = comp.coverPath ? ` data-cover-path="${escape(comp.coverPath)}"` : '';
-    chips.push(`<a class="doublon-chip same-artist" href="/compilation/${compilationId}" title="doublon d'artiste · ${escape(comp.title)}"><div class="doublon-cover${comp.coverPath ? '' : ' placeholder'}"${coverAttr}>${comp.coverPath ? '' : fallback}</div></a>`);
+    chips.push(`<a class="doublon-chip same-artist" href="/c/${compilationId}" title="doublon d'artiste · ${escape(comp.title)}"><div class="doublon-cover${comp.coverPath ? '' : ' placeholder'}"${coverAttr}>${comp.coverPath ? '' : fallback}</div></a>`);
   }
 
   if (!chips.length) return '';
