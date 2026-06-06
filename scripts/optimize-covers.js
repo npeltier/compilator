@@ -22,7 +22,7 @@ import { readFileSync } from 'fs';
 
 const PROJECT = process.env.GCLOUD_PROJECT
   || JSON.parse(readFileSync(new URL('../.firebaserc', import.meta.url))).projects.default;
-const BUCKET = process.env.FIREBASE_STORAGE_BUCKET || `${PROJECT}.firebasestorage.app`;
+const BUCKET = process.env.FIREBASE_STORAGE_BUCKET || `${PROJECT}.appspot.com`;
 
 const MAX_PX = 800;
 const JPEG_QUALITY = 80;
