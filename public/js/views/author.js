@@ -160,7 +160,7 @@ export async function mount(el, { params }) {
         filterKey = key;
         renderChips();
         renderShuffle();
-        renderCompilationsGrid(el.querySelector('#years'), compsForFilter(filterKey));
+        renderCompilationsGrid(el.querySelector('#years'), compsForFilter(filterKey), false);
       });
       return a;
     };
@@ -203,7 +203,7 @@ export async function mount(el, { params }) {
 
   renderChips();
   renderShuffle();
-  renderCompilationsGrid(el.querySelector('#years'), comps);
+  renderCompilationsGrid(el.querySelector('#years'), comps, true);
 
   function renderReactions() {
     const rxList = el.querySelector('#rxList');
@@ -289,36 +289,36 @@ export async function mount(el, { params }) {
   return () => unsub();
 }
 
-function renderCompilationsGrid(yearsEl, comps) {
+function renderCompilationsGrid(yearsEl, comps, flat = false) {
   yearsEl.innerHTML = '';
-  const byYear = new Map();
+  if (comps.length === 0) return;
+
+  const seasonLabel = { ete: 'Été', noel: 'Noël' };
+  const seasonOrder = { ete: 0, noel: 1 };
+
+  const groupMap = new Map();
   for (const c of comps) {
     const y = c.year || new Date(c.createdAt?.toMillis?.() || Date.now()).getFullYear();
-    if (!byYear.has(y)) byYear.set(y, []);
-    byYear.get(y).push(c);
+    const key = `${y}-${c.season || 'other'}`;
+    if (!groupMap.has(key)) groupMap.set(key, { year: y, season: c.season || 'other', list: [] });
+    groupMap.get(key).list.push(c);
   }
-  const yearsSorted = [...byYear.keys()].sort((a, b) => b - a);
-  const seasonLabel = { ete: 'Été', noel: 'Noël' };
+  const groups = [...groupMap.values()].sort((a, b) => {
+    if (a.year !== b.year) return (b.year || 0) - (a.year || 0);
+    return (seasonOrder[a.season] ?? 9) - (seasonOrder[b.season] ?? 9);
+  });
 
-  for (const y of yearsSorted) {
-    const groups = byYear.get(y);
-    const winter = groups.filter((c) => c.season === 'noel');
-    const summer = groups.filter((c) => c.season === 'ete');
-    const other = groups.filter((c) => c.season !== 'ete' && c.season !== 'noel');
-    for (const [seasonKey, list] of [['noel', winter], ['ete', summer], ['other', other]]) {
-      if (list.length === 0) continue;
-      const block = document.createElement('section');
-      block.className = `season-block ${seasonKey === 'noel' ? 'winter' : seasonKey === 'ete' ? 'summer' : ''}`;
-      const labelTxt = `${seasonLabel[seasonKey] || ''} ${y}`;
-      block.innerHTML = `
-        <header>
-          <h2>${labelTxt}</h2>
-          <span class="count">${list.length} compilation${list.length > 1 ? 's' : ''}</span>
-        </header>
-        <div class="cover-grid"></div>
-      `;
-      const grid = block.querySelector('.cover-grid');
-      for (const c of list) {
+  if (flat) {
+    const grid = document.createElement('div');
+    grid.className = 'cover-grid';
+
+    for (const group of groups) {
+      const lbl = document.createElement('div');
+      lbl.className = `season-inline-label${group.season === 'noel' ? ' winter' : group.season === 'ete' ? ' summer' : ''}`;
+      lbl.textContent = `${seasonLabel[group.season] || ''} ${group.year}`.trim();
+      grid.appendChild(lbl);
+
+      for (const c of group.list) {
         const card = document.createElement('a');
         card.className = 'cover-card';
         card.href = `/c/${c.id}`;
@@ -334,7 +334,40 @@ function renderCompilationsGrid(yearsEl, comps) {
             .catch(() => {});
         }
       }
-      yearsEl.appendChild(block);
     }
+
+    yearsEl.appendChild(grid);
+    return;
+  }
+
+  for (const group of groups) {
+    const block = document.createElement('section');
+    block.className = `season-block${group.season === 'noel' ? ' winter' : group.season === 'ete' ? ' summer' : ''}`;
+    const labelTxt = `${seasonLabel[group.season] || ''} ${group.year}`.trim();
+    block.innerHTML = `
+      <header>
+        <h2>${labelTxt}</h2>
+        <span class="count">${group.list.length} compilation${group.list.length > 1 ? 's' : ''}</span>
+      </header>
+      <div class="cover-grid"></div>
+    `;
+    const grid = block.querySelector('.cover-grid');
+    for (const c of group.list) {
+      const card = document.createElement('a');
+      card.className = 'cover-card';
+      card.href = `/c/${c.id}`;
+      const firstChar = (c.title || '?')[0].toUpperCase();
+      card.innerHTML = `
+        <div class="art ${c.coverPath ? '' : 'placeholder'}">${c.coverPath ? '' : firstChar}</div>
+        <div class="title">${escape(c.title)}</div>
+      `;
+      grid.appendChild(card);
+      if (c.coverPath) {
+        getDownloadURL(storageRef(storage, c.coverPath))
+          .then((url) => { card.querySelector('.art').style.backgroundImage = `url(${url})`; })
+          .catch(() => {});
+      }
+    }
+    yearsEl.appendChild(block);
   }
 }

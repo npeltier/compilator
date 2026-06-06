@@ -241,6 +241,22 @@ h3 { font-size: 24px; letter-spacing: 0.04em; }
 }
 
 /* -------- compilation grid -------- */
+/* Inline season label — grid cell same width as a cover card, used on author pages */
+.season-inline-label {
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 14px;
+  font-family: var(--display);
+  font-size: 28px;
+  letter-spacing: 0.02em;
+  color: var(--ink-dim);
+  align-self: end;
+}
+.season-inline-label.winter { color: var(--winter); }
+.season-inline-label.winter::before { content: '❄ '; }
+.season-inline-label.summer { color: var(--summer); }
+.season-inline-label.summer::before { content: '☀ '; }
+
 .season-block { margin-bottom: 64px; }
 .season-block header {
   display: flex;
