@@ -36,6 +36,32 @@ import { deleteCompilation, replaceSongBinary, uploadCover } from '../upload-pip
 import { navigate } from '../router.js';
 import { avatarHTML, paintAvatars } from '../avatar.js';
 
+function doubalonChipsHTML(doublons, currentCompId) {
+  if (!doublons) return '';
+  const chips = [];
+
+  const seenTrack = new Set();
+  for (const { compilationId } of doublons.sameTrack || []) {
+    if (compilationId === currentCompId || seenTrack.has(compilationId)) continue;
+    seenTrack.add(compilationId);
+    const comp = getCompilation(compilationId);
+    if (!comp) continue;
+    chips.push(`<a class="doublon-chip same-track" href="/compilation/${compilationId}" title="${escape(comp.title)}">doublon</a>`);
+  }
+
+  const seenArtist = new Set();
+  for (const { compilationId } of doublons.sameArtist || []) {
+    if (compilationId === currentCompId || seenArtist.has(compilationId)) continue;
+    seenArtist.add(compilationId);
+    const comp = getCompilation(compilationId);
+    if (!comp) continue;
+    chips.push(`<a class="doublon-chip same-artist" href="/compilation/${compilationId}" title="${escape(comp.title)}">doublon d'artiste</a>`);
+  }
+
+  if (!chips.length) return '';
+  return `<div class="tk-doublons">${chips.join('')}</div>`;
+}
+
 function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -77,6 +103,7 @@ export async function mount(el, { params }) {
       compilationId: comp.id,
       compilationTitle: comp.title,
       coverPath: comp.coverPath || null,
+      doublons: s.doublons || null,
     };
   });
 
@@ -135,6 +162,7 @@ export async function mount(el, { params }) {
         <div class="tk-meta">
           <div class="title">${escape(t.title)}</div>
           <div class="artist">${escape(t.artist)}</div>
+          ${doubalonChipsHTML(t.doublons, id)}
         </div>
         <div class="tk-react">
           <button class="rx-like" title="J'aime" aria-label="J'aime">🤍</button>
@@ -144,6 +172,7 @@ export async function mount(el, { params }) {
       `;
       li.addEventListener('click', (e) => {
         if (e.target.closest('.tk-react')) return;
+        if (e.target.closest('.tk-doublons')) return;
         playQueue(songs, { startIndex: i, sourceLabel: liveCompTitle });
       });
       li.querySelector('.rx-like').addEventListener('click', (e) => {

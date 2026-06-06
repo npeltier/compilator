@@ -8,6 +8,7 @@ import { Readable, PassThrough } from 'stream';
 
 import { computeMp3Hash, getStorePath } from './hash.js';
 import { isAdminEmail } from './auth.js';
+import { findAndUpdateDoublons } from './doublons.js';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
@@ -132,6 +133,13 @@ export async function processSongFromStaging({ tempPath, compilationId, order })
 
   // Best-effort staging cleanup.
   try { await stagingFile.delete(); } catch (e) { /* ignore */ }
+
+  // Compute and store doublon references (best-effort).
+  try {
+    await findAndUpdateDoublons(db, compilationId, songRef.id, hash, songData.artist);
+  } catch (e) {
+    console.warn('findAndUpdateDoublons failed (non-fatal):', e);
+  }
 
   return {
     songId: songRef.id,
