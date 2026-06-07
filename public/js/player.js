@@ -32,6 +32,7 @@ audio.preload = 'metadata';
 let queue = [];
 let cursor = -1;
 let sourceLabel = '';
+let userPaused = false;
 let bar;
 const coverUrlCache = new Map(); // coverPath → resolved download URL (download URLs are stable)
 const audioUrlCache = new Map(); // storagePath → resolved download URL (same)
@@ -106,7 +107,10 @@ export function initPlayer() {
   `;
   document.body.appendChild(bar);
 
-  bar.querySelector('#pb-play').addEventListener('click', () => audio.paused ? audio.play() : audio.pause());
+  bar.querySelector('#pb-play').addEventListener('click', () => {
+    if (audio.paused) { userPaused = false; audio.play(); }
+    else { userPaused = true; audio.pause(); }
+  });
   bar.querySelector('#pb-prev').addEventListener('click', () => playAt(cursor - 1));
   bar.querySelector('#pb-next').addEventListener('click', () => playAt(cursor + 1));
   bar.querySelector('#pb-stop').addEventListener('click', stop);
@@ -134,8 +138,14 @@ export function initPlayer() {
     bar.querySelector('#pb-tot').textContent = fmt(d);
     persistThrottled();
   });
-  audio.addEventListener('play', () => { bar.querySelector('#pb-play').textContent = '⏸'; persist(); });
+  audio.addEventListener('play', () => { userPaused = false; bar.querySelector('#pb-play').textContent = '⏸'; persist(); });
   audio.addEventListener('pause', () => { bar.querySelector('#pb-play').textContent = '▶'; persist(); });
+  // Resume after phone-call or system interruption (not user-initiated pause).
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && audio.paused && !userPaused && cursor >= 0) {
+      audio.play().catch(() => {});
+    }
+  });
   audio.addEventListener('ended', () => playAt(cursor + 1));
 
   document.addEventListener('keydown', (e) => {
@@ -242,11 +252,12 @@ function persistThrottled() {
 }
 function persist() {
   if (cursor < 0 || !queue[cursor]) return;
-  const t = queue[cursor];
-  // Save only the current track + position to keep storage tiny; full queue is
-  // out of scope for resume (user can re-trigger a shuffle).
+  // eslint-disable-next-line no-unused-vars
+  const strip = ({ li, ...rest }) => rest;
   sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-    track: t,
+    track: strip(queue[cursor]),
+    queue: queue.map(strip),
+    cursor,
     sourceLabel,
     position: audio.currentTime || 0,
     paused: audio.paused,
@@ -256,8 +267,8 @@ async function restoreSession() {
   let saved;
   try { saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null'); } catch (_) { saved = null; }
   if (!saved?.track?.storagePath) return;
-  queue = [saved.track];
-  cursor = 0;
+  queue = saved.queue?.length ? saved.queue : [saved.track];
+  cursor = saved.cursor ?? 0;
   sourceLabel = saved.sourceLabel || '';
   bar.hidden = false;
   document.body.classList.add('has-player');
@@ -270,6 +281,7 @@ async function restoreSession() {
     const url = await resolveAudioUrl(saved.track.storagePath);
     audio.src = url;
     audio.currentTime = saved.position || 0;
+    userPaused = !!saved.paused;
     if (!saved.paused) await audio.play();
     updateMediaSession();
   } catch (err) {
