@@ -186,12 +186,12 @@ export async function mount(el, { params }) {
     btn.innerHTML = scope
       ? `🔀 ${escape(scopeLabel)} en aléatoire`
       : `🔀 Tout en aléatoire`;
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       // Reuse queueAuthor when no filter; otherwise build from our filtered list
       // (already shuffled-randomly via shuffleArr below).
       const shuffled = scope
         ? tracks.slice().sort(() => Math.random() - 0.5)
-        : queueAuthor(emailKey);
+        : await queueAuthor(emailKey);
       playQueue(shuffled, {
         sourceLabel: scope
           ? `${scopeLabel} chez ${displayName} en aléatoire`

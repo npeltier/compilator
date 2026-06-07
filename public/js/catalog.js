@@ -1,14 +1,12 @@
 // Central in-memory cache for the music catalog.
 //
-// Loaded once on shell boot via `loadCatalog()`:
-//   - songsById:           Map<songId, songDoc & { compilationId }>
+// Boot (loadCatalog): fetches compilations + users — enough to render all views.
+// Lazy (ensureSongsLoaded): collectionGroup('songs') — deferred until first
+//   shuffle click so the expensive read doesn't block the initial paint.
+//
 //   - compilationsById:    Map<compId, compDoc>
 //   - usersByEmail:        Map<emailLower, userDoc & { email }>
-//
-// Songs live as a subcollection under each compilation (one song doc per
-// occurrence; the binary itself is deduped at the storage layer). The
-// collection-group query pulls every song with one round trip; doc.ref.parent
-// .parent.id gives us the owning compilation.
+//   - songsById:           Map<songId, songDoc & { compilationId }>  ← lazy
 
 import { db } from './firebase-init.js';
 import {
@@ -24,13 +22,14 @@ const compilationsById = new Map();
 const usersByEmail = new Map();
 const allowlistByEmail = new Map();   // admin-only
 let loaded = false;
+let songsLoaded = false;
+let songsLoadingPromise = null;
 
 export async function loadCatalog() {
   if (loaded) return;
 
-  const [compsSnap, songsSnap, usersSnap] = await Promise.all([
+  const [compsSnap, usersSnap] = await Promise.all([
     getDocs(query(collection(db, 'compilations'), orderBy('createdAt', 'asc'))),
-    getDocs(collectionGroup(db, 'songs')),
     getDocs(collection(db, 'users')),
   ]);
 
@@ -42,17 +41,23 @@ export async function loadCatalog() {
   compilationsById.clear();
   compsSnap.forEach((d) => compilationsById.set(d.id, { id: d.id, ...d.data() }));
 
-  songsById.clear();
-  songsSnap.forEach((d) => {
-    // Skip legacy top-level /songs docs (pre-wipe leftovers) — they have no
-    // parent compilation. Once the wipe is done, every song is a subcollection
-    // doc and parent.parent always resolves.
-    const parentComp = d.ref.parent.parent;
-    if (!parentComp) return;
-    songsById.set(d.id, { id: d.id, compilationId: parentComp.id, ...d.data() });
-  });
-
   loaded = true;
+}
+
+export function ensureSongsLoaded() {
+  if (songsLoaded) return Promise.resolve();
+  if (songsLoadingPromise) return songsLoadingPromise;
+  songsLoadingPromise = getDocs(collectionGroup(db, 'songs')).then((snap) => {
+    songsById.clear();
+    snap.forEach((d) => {
+      const parentComp = d.ref.parent.parent;
+      if (!parentComp) return;
+      songsById.set(d.id, { id: d.id, compilationId: parentComp.id, ...d.data() });
+    });
+    songsLoaded = true;
+    songsLoadingPromise = null;
+  });
+  return songsLoadingPromise;
 }
 
 export function getSong(id) { return songsById.get(id); }

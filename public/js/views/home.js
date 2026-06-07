@@ -100,9 +100,9 @@ export async function mount(el, { query }) {
   // ---- Shuffle row ----
   const shuffleRow = el.querySelector('#shuffleRow');
   const buttons = [
-    { id: 'sh-all', label: '🔀 Tout en aléatoire', show: comps.length > 0, fn: () => playQueue(queueAllSongs(), { sourceLabel: 'Tout en aléatoire' }) },
-    { id: 'sh-clean', label: 'Tout sauf les 😬', show: comps.length > 0, fn: () => playQueue(queueAllExceptDisliked(), { sourceLabel: 'Tout sauf les �' }) },
-    { id: 'sh-liked', label: '❤️ Mes coups de cœur', show: likeCount() > 0, fn: () => playQueue(queueLikedSongs(), { sourceLabel: 'Mes coups de cœur' }) },
+    { id: 'sh-all', label: '🔀 Tout en aléatoire', show: comps.length > 0, fn: async () => playQueue(await queueAllSongs(), { sourceLabel: 'Tout en aléatoire' }) },
+    { id: 'sh-clean', label: 'Tout sauf les 😬', show: comps.length > 0, fn: async () => playQueue(await queueAllExceptDisliked(), { sourceLabel: 'Tout sauf les �' }) },
+    { id: 'sh-liked', label: '❤️ Mes coups de cœur', show: likeCount() > 0, fn: async () => playQueue(await queueLikedSongs(), { sourceLabel: 'Mes coups de cœur' }) },
   ];
   for (const b of buttons) {
     if (!b.show) continue;

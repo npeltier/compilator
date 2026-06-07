@@ -4,6 +4,7 @@
 import {
   allCompilations,
   allSongs,
+  ensureSongsLoaded,
   trackFromSongId,
 } from './catalog.js';
 import { dislikedSongIds, likedSongIds } from './reactions.js';
@@ -18,12 +19,14 @@ function shuffle(arr) {
 }
 
 // "Tout en aléatoire" — every song, including disliked ones.
-export function queueAllSongs() {
+export async function queueAllSongs() {
+  await ensureSongsLoaded();
   return shuffle(allSongs().map((s) => trackFromSongId(s.id)).filter(Boolean));
 }
 
 // "Sauf les 😬" — every song minus the user's disliked ones.
-export function queueAllExceptDisliked() {
+export async function queueAllExceptDisliked() {
+  await ensureSongsLoaded();
   const skip = new Set(dislikedSongIds());
   return shuffle(
     allSongs()
@@ -34,14 +37,16 @@ export function queueAllExceptDisliked() {
 }
 
 // "Mes coups de cœur" — only the user's liked songs.
-export function queueLikedSongs() {
+export async function queueLikedSongs() {
+  await ensureSongsLoaded();
   return shuffle(likedSongIds().map((id) => trackFromSongId(id)).filter(Boolean));
 }
 
 // Per-section "shuffle this season+year". Songs are already attached to their
 // compilation in the catalog (songs are a subcollection), so we filter the
 // in-memory map without extra round trips.
-export function queueSeasonYear(season, year) {
+export async function queueSeasonYear(season, year) {
+  await ensureSongsLoaded();
   const yearNum = typeof year === 'string' ? parseInt(year, 10) : year;
   const compIds = new Set(
     allCompilations()
@@ -57,7 +62,8 @@ export function queueSeasonYear(season, year) {
 
 // "Tout chez {auteur} en aléatoire" — every song from compilations authored by
 // the given email, shuffled.
-export function queueAuthor(authorEmail) {
+export async function queueAuthor(authorEmail) {
+  await ensureSongsLoaded();
   const key = (authorEmail || '').toLowerCase();
   const compIds = new Set(
     allCompilations().filter((c) => c.author === key).map((c) => c.id),

@@ -2,7 +2,7 @@
 // router, and renders the persistent player bar.
 
 import { isAdminSync, requireAuth, logout } from './auth-guard.js';
-import { loadAllowlist, loadCatalog } from './catalog.js';
+import { ensureSongsLoaded, loadAllowlist, loadCatalog } from './catalog.js';
 import { loadReactions } from './reactions.js';
 import { initPlayer } from './player.js';
 import { register, start } from './router.js';
@@ -34,6 +34,7 @@ await Promise.all([
 ]);
 
 initPlayer();
+ensureSongsLoaded(); // warm in background; not awaited — shuffle buttons await it on click
 
 register('/', () => import('./views/home.js'));
 register('/c/:id', () => import('./views/compilation.js'));
