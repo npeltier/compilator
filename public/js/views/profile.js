@@ -1,6 +1,6 @@
 // Profile view: edit displayName + avatar + password, browse own ❤️ likes.
 
-import { logout } from './auth-guard.js';
+import { logout } from '../auth-guard.js';
 import { auth, db, storage } from '../firebase-init.js';
 import {
   EmailAuthProvider,
