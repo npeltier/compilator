@@ -1,5 +1,6 @@
 // Profile view: edit displayName + avatar + password, browse own ❤️ likes.
 
+import { logout } from './auth-guard.js';
 import { auth, db, storage } from '../firebase-init.js';
 import {
   EmailAuthProvider,
@@ -24,6 +25,9 @@ import {
 import { trackFromSongId, updateUserLocal } from '../catalog.js';
 import { playQueue } from '../player.js';
 import { avatarUrl, invalidateAvatar } from '../avatar.js';
+
+
+document.getElementById('logout').addEventListener('click', (e) => { e.preventDefault(); logout(); });
 
 function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -75,7 +79,7 @@ export async function mount(el) {
           <div id="avatarStatus" style="font-size:12px;color:var(--ink-dim);margin-top:4px;"></div>
         </div>
       </div>
-
+      <a href="#" id="logout">Déconnexion</a>
       <form id="form">
         <label for="email">Adresse e-mail</label>
         <input id="email" disabled>
