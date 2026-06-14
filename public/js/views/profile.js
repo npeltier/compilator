@@ -29,7 +29,6 @@ import {
   onChange as onCompLikeChange,
 } from '../liked-compilations.js';
 import {
-  authorSlug,
   displayNameFor,
   getCompilation,
   trackFromSongId,
@@ -45,6 +44,21 @@ function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
+}
+
+// A toggleable filter chip (optionally with an author avatar), mirroring the
+// home view's author chips.
+function mkAuthorChip(label, active, onClick, avatarEmail = null) {
+  const a = document.createElement('a');
+  a.className = 'chip' + (active ? ' active' : '');
+  a.href = '#';
+  a.setAttribute('role', 'button');
+  a.setAttribute('aria-pressed', String(active));
+  a.innerHTML = avatarEmail
+    ? `${avatarHTML(avatarEmail, { size: 'xs' })}<span>${escape(label)}</span>`
+    : escape(label);
+  a.addEventListener('click', (e) => { e.preventDefault(); onClick(); });
+  return a;
 }
 
 // Center-crop to square then scale to `size` × `size` JPEG; keeps avatars under
@@ -108,6 +122,7 @@ export async function mount(el) {
 
       <section class="section" style="margin-top:64px;">
         <h3>Mes compilations aimées <span id="likedCompsCount" class="eyebrow" style="float:right"></span></h3>
+        <div class="chip-row" id="likedCompsAuthors"></div>
         <div id="likedComps"></div>
         <div id="likedCompsEmpty" class="notice" hidden>Aucune compilation aimée pour l'instant. Mets un ❤️ depuis n'importe quelle compilation.</div>
       </section>
@@ -255,17 +270,47 @@ export async function mount(el) {
 
   // ---- Liked compilations ----
   const likedCompsEl = el.querySelector('#likedComps');
+  const likedCompsAuthorsEl = el.querySelector('#likedCompsAuthors');
   const likedCompsEmptyEl = el.querySelector('#likedCompsEmpty');
   const likedCompsCountEl = el.querySelector('#likedCompsCount');
+  // Author filter for the liked-compilations grid (empty = no constraint).
+  const selectedLikedAuthors = new Set();
 
   function renderLikedComps() {
-    likedCompsEl.innerHTML = '';
     // Drop ids whose compilation is no longer in the catalog (deleted).
-    const comps = likedCompilationIds().map(getCompilation).filter(Boolean);
-    comps.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
-    likedCompsCountEl.textContent = comps.length ? `${comps.length} compilation${comps.length > 1 ? 's' : ''}` : '';
-    likedCompsEmptyEl.hidden = comps.length > 0;
+    const all = likedCompilationIds().map(getCompilation).filter(Boolean)
+      .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+    likedCompsCountEl.textContent = all.length ? `${all.length} compilation${all.length > 1 ? 's' : ''}` : '';
+    likedCompsEmptyEl.hidden = all.length > 0;
 
+    // Distinct authors among liked comps; prune selections that no longer apply.
+    const authors = [...new Set(all.map((c) => c.author).filter(Boolean))]
+      .sort((a, b) => displayNameFor(a).localeCompare(displayNameFor(b), 'fr'));
+    for (const a of [...selectedLikedAuthors]) if (!authors.includes(a)) selectedLikedAuthors.delete(a);
+
+    // Per-author filter chips — only worth showing when likes span >1 author.
+    likedCompsAuthorsEl.innerHTML = '';
+    if (authors.length > 1) {
+      likedCompsAuthorsEl.appendChild(mkAuthorChip('Tout', selectedLikedAuthors.size === 0, () => {
+        selectedLikedAuthors.clear();
+        renderLikedComps();
+      }));
+      authors.forEach((email) => likedCompsAuthorsEl.appendChild(mkAuthorChip(
+        displayNameFor(email),
+        selectedLikedAuthors.has(email),
+        () => {
+          selectedLikedAuthors.has(email) ? selectedLikedAuthors.delete(email) : selectedLikedAuthors.add(email);
+          renderLikedComps();
+        },
+        email,
+      )));
+    }
+
+    const comps = selectedLikedAuthors.size
+      ? all.filter((c) => selectedLikedAuthors.has(c.author))
+      : all;
+
+    likedCompsEl.innerHTML = '';
     const grid = document.createElement('div');
     grid.className = 'cover-grid';
     comps.forEach((c) => {
@@ -277,12 +322,20 @@ export async function mount(el) {
           <div class="art ${c.coverPath ? '' : 'placeholder'}">${c.coverPath ? '' : firstChar}</div>
           <div class="title">${escape(c.title)}</div>
         </a>
-        <a class="cover-card-author" href="/author/${authorSlug(c.author)}">
+        <a class="cover-card-author" href="#" role="button" title="Filtrer par ${escape(displayNameFor(c.author))}">
           ${avatarHTML(c.author, { size: 'xs' })}
           <span class="author">${escape(displayNameFor(c.author))}</span>
         </a>
         <button class="lk-unlike" title="Retirer le ❤️" aria-label="Retirer">❤️</button>
       `;
+      // Clicking a card's author filters the grid to that author (instead of
+      // navigating away to their profile).
+      card.querySelector('.cover-card-author').addEventListener('click', (e) => {
+        e.preventDefault();
+        selectedLikedAuthors.clear();
+        selectedLikedAuthors.add(c.author);
+        renderLikedComps();
+      });
       card.querySelector('.lk-unlike').addEventListener('click', () => toggleCompLike(c.id));
       grid.appendChild(card);
       if (c.coverPath) {
@@ -293,6 +346,7 @@ export async function mount(el) {
     });
     likedCompsEl.appendChild(grid);
     paintAvatars(likedCompsEl);
+    paintAvatars(likedCompsAuthorsEl);
   }
   renderLikedComps();
   const unsubCompLike = onCompLikeChange(renderLikedComps);

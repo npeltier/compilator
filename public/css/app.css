@@ -794,6 +794,7 @@ body.has-player { padding-bottom: 100px; }
 
 /* -------- author / filter chips -------- */
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 32px; }
+.chip-row:empty { display: none; }
 .chip {
   display: inline-flex;
   align-items: center;

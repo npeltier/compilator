@@ -16,7 +16,6 @@ import {
 import {
   allCompilations,
   allSongs,
-  authorSlug,
   displayNameFor,
   emailFromAuthorSlug,
   getCompilation,
@@ -39,6 +38,21 @@ function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
+}
+
+// A toggleable filter chip (optionally with an author avatar), mirroring the
+// home view's author chips.
+function mkAuthorChip(label, active, onClick, avatarEmail = null) {
+  const a = document.createElement('a');
+  a.className = 'chip' + (active ? ' active' : '');
+  a.href = '#';
+  a.setAttribute('role', 'button');
+  a.setAttribute('aria-pressed', String(active));
+  a.innerHTML = avatarEmail
+    ? `${avatarHTML(avatarEmail, { size: 'xs' })}<span>${escape(label)}</span>`
+    : escape(label);
+  a.addEventListener('click', (e) => { e.preventDefault(); onClick(); });
+  return a;
 }
 
 export async function mount(el, { params }) {
@@ -94,6 +108,7 @@ export async function mount(el, { params }) {
         <p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 16px;">
           Les compilations qu'il a aimées, n'importe où dans le catalogue.
         </p>
+        <div class="chip-row" id="hisLikedCompsAuthors"></div>
         <div id="hisLikedComps"></div>
         <div id="hisLikedCompsEmpty" class="notice" hidden>Pas encore de compilation aimée.</div>
       </section>
@@ -271,19 +286,54 @@ export async function mount(el, { params }) {
   // others' reactions; we only display likes, not dislikes).
   renderHisLikes().catch((err) => console.warn('hisLikes fetch failed', err));
 
-  // Fetch the author's liked compilations (same read permission as reactions).
-  renderHisLikedComps().catch((err) => console.warn('hisLikedComps fetch failed', err));
+  // Fetch the author's liked compilations (same read permission as reactions),
+  // then render with a per-author filter over the result.
+  const gridWrap = el.querySelector('#hisLikedComps');
+  const authorsWrap = el.querySelector('#hisLikedCompsAuthors');
+  const hisLikedCompsEmptyEl = el.querySelector('#hisLikedCompsEmpty');
+  const hisLikedCompsCountEl = el.querySelector('#hisLikedCompsCount');
+  let hisLikedComps = [];
+  const selectedHisLikedAuthors = new Set();
 
-  async function renderHisLikedComps() {
-    const gridWrap = el.querySelector('#hisLikedComps');
-    const emptyEl = el.querySelector('#hisLikedCompsEmpty');
-    const countEl = el.querySelector('#hisLikedCompsCount');
+  fetchHisLikedComps().catch((err) => console.warn('hisLikedComps fetch failed', err));
+
+  async function fetchHisLikedComps() {
     const snap = await getDocs(collection(db, 'users', emailKey, 'likedCompilations'));
     // Resolve to compilations still in the catalog, newest first.
-    const comps = snap.docs.map((d) => getCompilation(d.id)).filter(Boolean)
+    hisLikedComps = snap.docs.map((d) => getCompilation(d.id)).filter(Boolean)
       .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
-    countEl.textContent = comps.length ? `${comps.length} compilation${comps.length > 1 ? 's' : ''}` : '';
-    emptyEl.hidden = comps.length > 0;
+    renderHisLikedComps();
+  }
+
+  function renderHisLikedComps() {
+    hisLikedCompsCountEl.textContent = hisLikedComps.length
+      ? `${hisLikedComps.length} compilation${hisLikedComps.length > 1 ? 's' : ''}` : '';
+    hisLikedCompsEmptyEl.hidden = hisLikedComps.length > 0;
+
+    const authors = [...new Set(hisLikedComps.map((c) => c.author).filter(Boolean))]
+      .sort((a, b) => displayNameFor(a).localeCompare(displayNameFor(b), 'fr'));
+    for (const a of [...selectedHisLikedAuthors]) if (!authors.includes(a)) selectedHisLikedAuthors.delete(a);
+
+    authorsWrap.innerHTML = '';
+    if (authors.length > 1) {
+      authorsWrap.appendChild(mkAuthorChip('Tout', selectedHisLikedAuthors.size === 0, () => {
+        selectedHisLikedAuthors.clear();
+        renderHisLikedComps();
+      }));
+      authors.forEach((email) => authorsWrap.appendChild(mkAuthorChip(
+        displayNameFor(email),
+        selectedHisLikedAuthors.has(email),
+        () => {
+          selectedHisLikedAuthors.has(email) ? selectedHisLikedAuthors.delete(email) : selectedHisLikedAuthors.add(email);
+          renderHisLikedComps();
+        },
+        email,
+      )));
+    }
+
+    const comps = selectedHisLikedAuthors.size
+      ? hisLikedComps.filter((c) => selectedHisLikedAuthors.has(c.author))
+      : hisLikedComps;
 
     const grid = document.createElement('div');
     grid.className = 'cover-grid';
@@ -296,11 +346,17 @@ export async function mount(el, { params }) {
           <div class="art ${c.coverPath ? '' : 'placeholder'}">${c.coverPath ? '' : firstChar}</div>
           <div class="title">${escape(c.title)}</div>
         </a>
-        <a class="cover-card-author" href="/author/${authorSlug(c.author)}">
+        <a class="cover-card-author" href="#" role="button" title="Filtrer par ${escape(displayNameFor(c.author))}">
           ${avatarHTML(c.author, { size: 'xs' })}
           <span class="author">${escape(displayNameFor(c.author))}</span>
         </a>
       `;
+      card.querySelector('.cover-card-author').addEventListener('click', (e) => {
+        e.preventDefault();
+        selectedHisLikedAuthors.clear();
+        selectedHisLikedAuthors.add(c.author);
+        renderHisLikedComps();
+      });
       grid.appendChild(card);
       if (c.coverPath) {
         getDownloadURL(storageRef(storage, c.coverPath))
@@ -311,6 +367,7 @@ export async function mount(el, { params }) {
     gridWrap.innerHTML = '';
     gridWrap.appendChild(grid);
     paintAvatars(gridWrap);
+    paintAvatars(authorsWrap);
   }
 
   async function renderHisLikes() {
