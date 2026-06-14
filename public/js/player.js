@@ -211,6 +211,10 @@ export async function playAt(idx) {
   if (idx < 0 || idx >= queue.length) { stop(); return; }
   cursor = idx;
   const t = queue[cursor];
+  // Stop the outgoing track now. Otherwise it keeps playing audibly while we
+  // resolve the next track's URL — and if that resolve/fetch fails, the player
+  // would appear to "switch" in the UI while still playing the old audio.
+  audio.pause();
   bar.hidden = false;
   document.body.classList.add('has-player');
   bar.querySelector('#pb-title').textContent = t.title || 'Sans titre';
