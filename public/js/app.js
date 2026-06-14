@@ -2,7 +2,8 @@
 // router, and renders the persistent player bar.
 
 import { isAdminSync, requireAuth } from './auth-guard.js';
-import { avatarHTML } from './avatar.js';
+import { avatarHTML, paintAvatars } from './avatar.js';
+import { displayNameFor } from './catalog.js';
 import { ensureSongsLoaded, loadAllowlist, loadCatalog } from './catalog.js';
 import { loadReactions } from './reactions.js';
 import { loadLikedCompilations } from './liked-compilations.js';
@@ -21,8 +22,6 @@ import { register, start } from './router.js';
 
 const user = await requireAuth();
 
-document.getElementById('who').innerHTML = avatarHTML(user.email);
-
 // Boot data — block first render until the catalog and reactions are available.
 // All views read from these caches and assume they're populated.
 await Promise.all([
@@ -34,6 +33,28 @@ await Promise.all([
   // who haven't signed in yet.
   isAdminSync(user.email) ? loadAllowlist().catch(() => {}) : null,
 ]);
+
+// Profile link in the top nav: avatar + display name. Rendered after the
+// catalog loads so getUser() resolves the user's avatarPath; paintAvatars then
+// fetches the image. Re-rendered on `profile-updated` (dispatched by the
+// profile view after an avatar / name change) so the nav stays in sync.
+function renderWho() {
+  const who = document.getElementById('who');
+  who.innerHTML = `${avatarHTML(user.email, { size: 'sm' })}<span class="who-name"></span>`;
+  who.querySelector('.who-name').textContent = displayNameFor(user.email);
+  paintAvatars(who);
+}
+renderWho();
+window.addEventListener('profile-updated', renderWho);
+
+// Keep --topbar-h in sync so the sticky filter bar parks just below the nav
+// (the nav wraps to a taller layout on phones).
+const topbar = document.querySelector('.topbar');
+if (topbar) {
+  const setTopbarH = () => document.documentElement.style.setProperty('--topbar-h', `${topbar.offsetHeight}px`);
+  setTopbarH();
+  new ResizeObserver(setTopbarH).observe(topbar);
+}
 
 initPlayer();
 ensureSongsLoaded(); // warm in background; not awaited — shuffle buttons await it on click

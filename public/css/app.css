@@ -116,6 +116,10 @@ label {
   justify-content: space-between;
   padding: 20px 32px;
   border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--bg);
 }
 .brand {
   font-family: var(--display);
@@ -134,7 +138,16 @@ label {
   color: var(--ink-dim);
 }
 .nav-links a:hover { color: var(--ink); }
-.nav-links .who { color: var(--ink-faint); font-style: italic; text-transform: none; letter-spacing: 0; }
+.nav-links .who {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-faint);
+  font-style: italic;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.nav-links a:hover .who { color: var(--ink); }
 
 /* -------- headings -------- */
 h1, h2, h3 {
@@ -745,7 +758,8 @@ body.has-player { padding-bottom: 100px; }
 /* -------- sticky collapsible filter bar -------- */
 .filter-bar {
   position: sticky;
-  top: 8px;
+  /* Park just below the sticky top nav (height tracked in --topbar-h by app.js). */
+  top: calc(var(--topbar-h, 72px) + 8px);
   z-index: 50;
   margin-bottom: 32px;
 }
@@ -824,7 +838,8 @@ body.has-player { padding-bottom: 100px; }
     order: 2;
   }
   .nav-links a { font-size: 11px; letter-spacing: 0.1em; }
-  .nav-links .who { display: none; }
+  /* Keep the avatar (and thus the profile link) on phones; drop the name only. */
+  .nav-links .who-name { display: none; }
 
   /* Headings */
   h1 { font-size: 40px; }

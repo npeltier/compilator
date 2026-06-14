@@ -185,6 +185,7 @@ export async function mount(el) {
       });
       await setDoc(userDocRef, { avatarPath: path, updatedAt: serverTimestamp() }, { merge: true });
       updateUserLocal(emailKey, { avatarPath: path });
+      window.dispatchEvent(new CustomEvent('profile-updated'));
       avatarStatus.textContent = 'Avatar mis à jour.';
       // Force a fresh fetch since the URL token changed.
       const url = await avatarUrl(path);
@@ -211,6 +212,7 @@ export async function mount(el) {
     try {
       await setDoc(userDocRef, { displayName, updatedAt: serverTimestamp() }, { merge: true });
       updateUserLocal(emailKey, { displayName });
+      window.dispatchEvent(new CustomEvent('profile-updated'));
       okEl.hidden = false;
     } catch (err) {
       errEl.textContent = err.message; errEl.hidden = false;
