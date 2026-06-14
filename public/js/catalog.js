@@ -12,7 +12,10 @@ import { db } from './firebase-init.js';
 import {
   collection,
   collectionGroup,
+  doc,
+  getDoc,
   getDocs,
+  getDocsFromCache,
   orderBy,
   query,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
@@ -25,13 +28,76 @@ let loaded = false;
 let songsLoaded = false;
 let songsLoadingPromise = null;
 
+// ---------------------------------------------------------------------------
+// Catalog cache freshness.
+//
+// `/meta/catalog` holds monotonic revision counters bumped by Firestore
+// triggers on every catalog write (see functions/index.js). On boot we read
+// that single doc from the server (1 read) and compare each counter to the one
+// we last synced (kept in localStorage). When they match, we serve the heavy
+// collection queries straight from Firestore's local cache — zero server reads
+// and instant. When they differ (or the cache is cold / missing), we fall back
+// to a server read and record the new revision.
+//
+// Net effect for our rarely-changing catalog: ~1 read per session instead of
+// (compilations + users [+ songs]), and near-instant repeat loads. Degrades
+// gracefully — if anything goes wrong we just read from the server as before.
+const REV_KEY = 'catalog.rev.v1';
+
+async function fetchServerRevs() {
+  try {
+    const snap = await getDoc(doc(db, 'meta', 'catalog'));
+    const d = snap.exists() ? snap.data() : {};
+    return { coreRev: d.coreRev ?? 0, songsRev: d.songsRev ?? 0, ok: true };
+  } catch {
+    // Sentinel unreachable (offline / rules) — force server reads downstream.
+    return { coreRev: null, songsRev: null, ok: false };
+  }
+}
+
+function loadStoredRevs() {
+  try { return JSON.parse(localStorage.getItem(REV_KEY)) || {}; } catch { return {}; }
+}
+
+function storeRev(field, value) {
+  if (value == null) return;
+  try {
+    localStorage.setItem(REV_KEY, JSON.stringify({ ...loadStoredRevs(), [field]: value }));
+  } catch { /* private mode / quota — caching just won't persist */ }
+}
+
+let serverRevsPromise = null;
+function serverRevs() {
+  if (!serverRevsPromise) serverRevsPromise = fetchServerRevs();
+  return serverRevsPromise;
+}
+
 export async function loadCatalog() {
   if (loaded) return;
 
-  const [compsSnap, usersSnap] = await Promise.all([
-    getDocs(query(collection(db, 'compilations'), orderBy('createdAt', 'asc'))),
-    getDocs(collection(db, 'users')),
-  ]);
+  const revs = await serverRevs();
+  const stored = loadStoredRevs();
+  const useCache = revs.ok && revs.coreRev != null && stored.coreRev === revs.coreRev;
+
+  const compsQ = query(collection(db, 'compilations'), orderBy('createdAt', 'asc'));
+  const usersQ = collection(db, 'users');
+
+  let compsSnap = null;
+  let usersSnap = null;
+  if (useCache) {
+    try {
+      [compsSnap, usersSnap] = await Promise.all([getDocsFromCache(compsQ), getDocsFromCache(usersQ)]);
+      // Rev matched but the cache is empty (cleared IndexedDB, new device,
+      // dev memory-cache) — don't trust it; fall through to a server read.
+      if (compsSnap.empty && usersSnap.empty) { compsSnap = null; usersSnap = null; }
+    } catch {
+      compsSnap = null; usersSnap = null;
+    }
+  }
+  if (!compsSnap) {
+    [compsSnap, usersSnap] = await Promise.all([getDocs(compsQ), getDocs(usersQ)]);
+    storeRev('coreRev', revs.coreRev);
+  }
 
   usersByEmail.clear();
   usersSnap.forEach((d) => {
@@ -47,7 +113,24 @@ export async function loadCatalog() {
 export function ensureSongsLoaded() {
   if (songsLoaded) return Promise.resolve();
   if (songsLoadingPromise) return songsLoadingPromise;
-  songsLoadingPromise = getDocs(collectionGroup(db, 'songs')).then((snap) => {
+  songsLoadingPromise = (async () => {
+    const revs = await serverRevs();
+    const stored = loadStoredRevs();
+    const useCache = revs.ok && revs.songsRev != null && stored.songsRev === revs.songsRev;
+    const songsQ = collectionGroup(db, 'songs');
+
+    let snap = null;
+    if (useCache) {
+      try {
+        snap = await getDocsFromCache(songsQ);
+        if (snap.empty) snap = null;
+      } catch { snap = null; }
+    }
+    if (!snap) {
+      snap = await getDocs(songsQ);
+      storeRev('songsRev', revs.songsRev);
+    }
+
     songsById.clear();
     snap.forEach((d) => {
       const parentComp = d.ref.parent.parent;
@@ -56,7 +139,7 @@ export function ensureSongsLoaded() {
     });
     songsLoaded = true;
     songsLoadingPromise = null;
-  });
+  })();
   return songsLoadingPromise;
 }
 

@@ -159,7 +159,12 @@ export async function mount(el) {
       avatarStatus.textContent = 'Envoi…';
       const path = `avatars/${emailKey}.jpg`;
       invalidateAvatar(path);
-      await uploadBytes(storageRef(storage, path), blob, { contentType: 'image/jpeg' });
+      // Long cache lifetime is safe: a re-upload rotates the download token, so
+      // getDownloadURL yields a fresh URL that bypasses the cached bytes.
+      await uploadBytes(storageRef(storage, path), blob, {
+        contentType: 'image/jpeg',
+        cacheControl: 'public, max-age=31536000',
+      });
       await setDoc(userDocRef, { avatarPath: path, updatedAt: serverTimestamp() }, { merge: true });
       updateUserLocal(emailKey, { avatarPath: path });
       avatarStatus.textContent = 'Avatar mis à jour.';

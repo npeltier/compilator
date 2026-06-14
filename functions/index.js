@@ -1,4 +1,5 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import admin from 'firebase-admin';
 
 import { isAdminEmail, requireAllowlistedCaller } from './auth.js';
@@ -213,6 +214,33 @@ export const removeUser = onCall({ memory: '256MiB', timeoutSeconds: 30 }, async
   }
   return { email: key };
 });
+
+// ---------------------------------------------------------------------------
+// Catalog version sentinel
+//
+// The client caches the catalog (compilations + users on boot, songs lazily)
+// in Firestore's local persistence and only re-reads from the server when a
+// revision counter changes. These triggers bump those counters on ANY write to
+// the relevant collections — covering both the callables above and the direct
+// client-side writes in upload.js / compilation.js / profile.js / migrate.js.
+//
+//   - coreRev:  compilations + users  (the boot payload)
+//   - songsRev: songs                 (the lazy collectionGroup payload)
+//
+// `/meta/catalog` lives outside the watched collections, so bumping it never
+// re-triggers these functions.
+const SENTINEL = () => admin.firestore().doc('meta/catalog');
+
+async function bumpRev(field) {
+  await SENTINEL().set({
+    [field]: FieldValue.increment(1),
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
+export const onCompilationWrite = onDocumentWritten('compilations/{compId}', () => bumpRev('coreRev'));
+export const onUserWrite = onDocumentWritten('users/{email}', () => bumpRev('coreRev'));
+export const onSongWrite = onDocumentWritten('compilations/{compId}/songs/{songId}', () => bumpRev('songsRev'));
 
 // Staging cleanup of /uploads/** is handled by a Cloud Storage lifecycle rule
 // configured outside of code (auto-delete after 1 day) — no scheduled function,

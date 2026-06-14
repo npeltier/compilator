@@ -26,6 +26,16 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/admins/$(callerEmail()));
     }
 
+    // Catalog version sentinel: a single doc holding monotonic revision
+    // counters (coreRev for compilations+users, songsRev for songs). Bumped by
+    // Firestore triggers (Admin SDK, bypassing rules) on any catalog write.
+    // Allowlisted clients read it once per session to decide whether their
+    // local Firestore cache is still fresh — see public/js/catalog.js.
+    match /meta/{docId} {
+      allow read: if isAllowlisted();
+      allow write: if false;
+    }
+
     // Allowlist: only Functions / admins write (via Admin SDK, bypassing rules).
     // Signed-in users can read their own entry so the client can check membership.
     match /allowlist/{email} {
