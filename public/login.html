@@ -11,7 +11,7 @@
 <body>
   <main class="login-card">
     <h1>Compilator</h1>
-    <p class="tagline">La discothèque des stooges enfin en ligne.</p>
+    <p class="tagline" id="hint">La discothèque des stooges enfin en ligne.</p>
 
     <div id="error" class="error" hidden></div>
     <div id="notice" class="notice" hidden></div>
@@ -20,16 +20,21 @@
       <label for="email">Adresse e-mail</label>
       <input id="email" type="email" autocomplete="email" required>
 
-      <label for="password">Mot de passe</label>
-      <input id="password" type="password" autocomplete="current-password" required minlength="6">
+      <div id="passwordRow">
+        <label for="password">Mot de passe</label>
+        <input id="password" type="password" autocomplete="current-password" minlength="6">
+      </div>
 
       <button type="submit" id="submit" class="btn-accent">Se connecter</button>
     </form>
 
-    <p class="alt">
+    <p class="alt" id="altDefault">
       <a href="#" id="toggle">Créer un compte</a>
       <span style="color:var(--ink-faint);margin:0 8px;">·</span>
-      <a href="#" id="reset">Mot de passe oublié</a>
+      <a href="#" id="reset">Première connexion / mot de passe oublié</a>
+    </p>
+    <p class="alt" id="altReset" hidden>
+      <a href="#" id="backToSignin">← Retour à la connexion</a>
     </p>
   </main>
 
@@ -49,9 +54,18 @@
     const form = document.getElementById('form');
     const errorEl = document.getElementById('error');
     const noticeEl = document.getElementById('notice');
+    const hintEl = document.getElementById('hint');
+    const passwordRow = document.getElementById('passwordRow');
+    const passwordEl = document.getElementById('password');
     const toggle = document.getElementById('toggle');
+    const reset = document.getElementById('reset');
+    const backToSignin = document.getElementById('backToSignin');
+    const altDefault = document.getElementById('altDefault');
+    const altReset = document.getElementById('altReset');
     const submit = document.getElementById('submit');
-    let mode = 'signin';
+
+    const DEFAULT_HINT = 'La discothèque des stooges enfin en ligne.';
+    let mode = 'signin'; // 'signin' | 'signup' | 'reset'
 
     const params = new URLSearchParams(location.search);
     if (params.get('error') === 'not_allowlisted') {
@@ -70,39 +84,66 @@
       }
     });
 
+    // Swap the card between sign-in, sign-up and the dedicated reset screen.
+    // The reset screen hides the password field entirely so the only thing to
+    // do is type the email and hit "Envoyer le lien" — the smooth first-use and
+    // forgotten-password path.
+    function setMode(next) {
+      mode = next;
+      clearError();
+      clearNotice();
+      const isReset = mode === 'reset';
+      passwordRow.hidden = isReset;
+      passwordEl.required = !isReset;
+      submit.disabled = false;
+      altDefault.hidden = isReset;
+      altReset.hidden = !isReset;
+      if (mode === 'reset') {
+        hintEl.textContent = "Première connexion ou mot de passe oublié ? Saisis ton adresse e-mail, on t'envoie un lien pour définir ton mot de passe.";
+        submit.textContent = 'Envoyer le lien';
+      } else if (mode === 'signup') {
+        hintEl.textContent = DEFAULT_HINT;
+        submit.textContent = 'Créer le compte';
+        toggle.textContent = 'Déjà inscrit ? Se connecter';
+      } else {
+        hintEl.textContent = DEFAULT_HINT;
+        submit.textContent = 'Se connecter';
+        toggle.textContent = 'Créer un compte';
+      }
+    }
+
     toggle.addEventListener('click', (e) => {
       e.preventDefault();
-      mode = mode === 'signin' ? 'signup' : 'signin';
-      submit.textContent = mode === 'signin' ? 'Se connecter' : 'Créer le compte';
-      toggle.textContent = mode === 'signin' ? 'Créer un compte' : 'Déjà inscrit ? Se connecter';
-      clearError();
+      setMode(mode === 'signin' ? 'signup' : 'signin');
     });
 
-    document.getElementById('reset').addEventListener('click', async (e) => {
+    reset.addEventListener('click', (e) => {
       e.preventDefault();
-      clearError();
-      const email = document.getElementById('email').value.trim().toLowerCase();
-      if (!email) {
-        showError("Saisis d'abord ton adresse e-mail, puis clique sur « Mot de passe oublié ».");
-        return;
-      }
-      try {
-        await sendPasswordResetEmail(auth, email);
-        noticeEl.textContent = `Un e-mail de réinitialisation a été envoyé à ${email}. Vérifie ta boîte (et les spams).`;
-        noticeEl.hidden = false;
-      } catch (err) {
-        showError(err.message || String(err));
-      }
+      setMode('reset');
+      document.getElementById('email').focus();
+    });
+
+    backToSignin.addEventListener('click', (e) => {
+      e.preventDefault();
+      setMode('signin');
     });
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       clearError();
+      clearNotice();
       submit.disabled = true;
       const email = document.getElementById('email').value.trim().toLowerCase();
-      const password = document.getElementById('password').value;
+      const password = passwordEl.value;
 
       try {
+        if (mode === 'reset') {
+          await sendPasswordResetEmail(auth, email);
+          noticeEl.textContent = `Un e-mail pour définir ton mot de passe a été envoyé à ${email}. Vérifie ta boîte (et les spams), puis reviens te connecter.`;
+          noticeEl.hidden = false;
+          submit.disabled = false;
+          return;
+        }
         if (mode === 'signin') {
           await signInWithEmailAndPassword(auth, email, password);
         } else {
@@ -130,6 +171,10 @@
     function clearError() {
       errorEl.hidden = true;
       errorEl.textContent = '';
+    }
+    function clearNotice() {
+      noticeEl.hidden = true;
+      noticeEl.textContent = '';
     }
   </script>
 </body>
