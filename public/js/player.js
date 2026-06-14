@@ -229,11 +229,13 @@ export async function playAt(idx) {
     url = await resolveAudioUrl(t.storagePath);
   } catch (err) {
     // The binary is missing/unreadable — skip to the next track rather than
-    // leaving the player stuck. Bail out if the whole queue is unavailable.
+    // leaving the player stuck. If the WHOLE queue is unavailable, stop trying
+    // but keep the bar on this track (don't tear the player down).
     console.warn('Morceau indisponible, passage au suivant :', t.title, err?.code || err);
     skippedInARow += 1;
-    if (skippedInARow >= queue.length) { skippedInARow = 0; stop(); return; }
-    return playAt(idx + 1);
+    if (skippedInARow >= queue.length) { skippedInARow = 0; return; }
+    // Wrap with modulo so skipping never runs off the end into stop().
+    return playAt((idx + 1) % queue.length);
   }
   skippedInARow = 0;
 
