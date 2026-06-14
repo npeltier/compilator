@@ -12,12 +12,14 @@
     "dev:fresh": "npx firebase emulators:start --only auth,functions,firestore,hosting,storage --project=demo-compilator",
     "seed": "node scripts/seed.js",
     "test:e2e": "node test/e2e/upload-flow.test.mjs",
+    "test:e2e:ui": "node test/e2e/home-filters.test.mjs",
     "optimize-covers": "node scripts/optimize-covers.js"
   },
   "devDependencies": {
     "firebase": "^12.14.0",
     "firebase-admin": "^13.10.0",
     "firebase-tools": "^15.19.0",
+    "playwright": "^1.60.0",
     "sharp": "^0.34.5"
   },
   "author": "",

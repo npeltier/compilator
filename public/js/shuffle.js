@@ -60,6 +60,20 @@ export async function queueSeasonYear(season, year) {
   return shuffle(tracks);
 }
 
+// Songs drawn from an explicit set of compilation ids, shuffled. Powers the
+// home view's multi-select filter "play selection" button, where the chosen
+// authors × seasons resolve to a set of compilations.
+export async function queueCompilations(compIds) {
+  await ensureSongsLoaded();
+  const set = compIds instanceof Set ? compIds : new Set(compIds);
+  return shuffle(
+    allSongs()
+      .filter((s) => set.has(s.compilationId))
+      .map((s) => trackFromSongId(s.id))
+      .filter(Boolean),
+  );
+}
+
 // "Tout chez {auteur} en aléatoire" — every song from compilations authored by
 // the given email, shuffled.
 export async function queueAuthor(authorEmail) {

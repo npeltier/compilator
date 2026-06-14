@@ -10,6 +10,7 @@ import {
   queueAllExceptDisliked,
   queueLikedSongs,
   queueSeasonYear,
+  queueCompilations,
 } from '../shuffle.js';
 import { playQueue } from '../player.js';
 import {
@@ -117,84 +118,145 @@ export async function mount(el, { query }) {
     shuffleRow.appendChild(btn);
   }
 
-  // ---- Author chips ----
-  const authorEmails = Array.from(new Set(comps.map((c) => c.author).filter(Boolean))).sort();
-  const chipsEl = el.querySelector('#authorChips');
-  const mkChip = ({ label, active, href, avatarEmail = null }) => {
-    const a = document.createElement('a');
-    a.className = 'chip' + (active ? ' active' : '');
-    a.href = href;
-    a.innerHTML = avatarEmail
-      ? `${avatarHTML(avatarEmail, { size: 'xs' })}<span>${escape(label)}</span>`
-      : escape(label);
-    return a;
-  };
-  chipsEl.appendChild(mkChip({ label: 'Tout', active: !filterAuthor, href: '/' }));
-  authorEmails.forEach((email) => chipsEl.appendChild(mkChip({
-    label: displayNameFor(email),
-    active: email === filterAuthor,
-    href: `/author/${authorSlug(email)}`,
-    avatarEmail: email,
-  })));
-
-  const shown = filterAuthor ? comps.filter((c) => c.author === filterAuthor) : comps;
-  el.querySelector('#empty').hidden = shown.length > 0;
-
-  // ---- Season+year filter chips ----
-  // Buckets are computed from `shown` so they intersect with the author filter:
-  // narrowing to one author only offers that author's seasons/years.
+  // ---- Multi-select filters (authors × season/year) ----
+  // Both chip rows toggle independently; an empty set means "no constraint".
+  // The grid shows compilations matching (selected authors) AND (selected
+  // season/years), and the "Lire la sélection" button plays a shuffled mix of
+  // exactly that set.
   const seasonLabel = { ete: 'Été', noel: 'Noël' };
   const seasonOrder = { ete: 0, noel: 1 };
+  const yearOf = (c) => c.year || new Date(c.createdAt?.toMillis?.() || Date.now()).getFullYear();
+  const keyOf = (c) => `${c.season || 'other'}-${yearOf(c)}`;
+
+  const authorEmails = Array.from(new Set(comps.map((c) => c.author).filter(Boolean)))
+    .sort((a, b) => displayNameFor(a).localeCompare(displayNameFor(b), 'fr'));
+
+  // Season/year buckets span all compilations (not just the author-filtered
+  // subset) so the chips stay put as you toggle authors. Each carries a label.
   const buckets = [];
   const seenKeys = new Set();
-  for (const c of shown) {
-    const y = c.year || new Date(c.createdAt?.toMillis?.() || Date.now()).getFullYear();
-    const key = `${c.season || 'other'}-${y}`;
+  for (const c of comps) {
+    const key = keyOf(c);
     if (seenKeys.has(key)) continue;
     seenKeys.add(key);
-    buckets.push({ key, season: c.season || 'other', year: y });
+    buckets.push({ key, season: c.season || 'other', year: yearOf(c) });
   }
   buckets.sort((a, b) => {
     if (a.year !== b.year) return (b.year || 0) - (a.year || 0);
     return (seasonOrder[a.season] ?? 9) - (seasonOrder[b.season] ?? 9);
   });
+  const labelForKey = new Map(buckets.map((b) => [b.key, `${seasonLabel[b.season] || b.season} ${b.year}`]));
 
-  let filterKey = null;
-  const matchesFilter = (c) => {
-    if (!filterKey) return true;
-    const y = c.year || new Date(c.createdAt?.toMillis?.() || Date.now()).getFullYear();
-    return `${c.season || 'other'}-${y}` === filterKey;
-  };
+  // Seed author selection from a legacy ?author= link, if present.
+  const selectedAuthors = new Set(filterAuthor && authorEmails.includes(filterAuthor) ? [filterAuthor] : []);
+  const selectedKeys = new Set();
 
+  el.querySelector('#empty').hidden = comps.length > 0;
+
+  const authorChipsEl = el.querySelector('#authorChips');
   const seasonChipsEl = el.querySelector('#seasonChips');
   const yearsEl = el.querySelector('#years');
+
+  const filteredComps = () => comps.filter((c) =>
+    (selectedAuthors.size === 0 || selectedAuthors.has(c.author))
+    && (selectedKeys.size === 0 || selectedKeys.has(keyOf(c))));
+
+  const toggle = (set, value) => { set.has(value) ? set.delete(value) : set.add(value); };
+
+  const mkChip = ({ label, active, avatarEmail = null, onClick }) => {
+    const a = document.createElement('a');
+    a.className = 'chip' + (active ? ' active' : '');
+    a.href = '#';
+    a.setAttribute('role', 'button');
+    a.setAttribute('aria-pressed', String(active));
+    a.innerHTML = avatarEmail
+      ? `${avatarHTML(avatarEmail, { size: 'xs' })}<span>${escape(label)}</span>`
+      : escape(label);
+    a.addEventListener('click', (e) => { e.preventDefault(); onClick(); });
+    return a;
+  };
+
+  function renderAuthorChips() {
+    authorChipsEl.innerHTML = '';
+    authorChipsEl.appendChild(mkChip({
+      label: 'Tout', active: selectedAuthors.size === 0,
+      onClick: () => { selectedAuthors.clear(); apply(); },
+    }));
+    authorEmails.forEach((email) => authorChipsEl.appendChild(mkChip({
+      label: displayNameFor(email),
+      active: selectedAuthors.has(email),
+      avatarEmail: email,
+      onClick: () => { toggle(selectedAuthors, email); apply(); },
+    })));
+  }
 
   function renderSeasonChips() {
     seasonChipsEl.innerHTML = '';
     if (buckets.length < 2) return; // single bucket: nothing to filter
-    const mkChip = (label, key) => {
-      const a = document.createElement('a');
-      a.className = 'chip' + (filterKey === key ? ' active' : '');
-      a.href = '#';
-      a.textContent = label;
-      a.addEventListener('click', (e) => {
-        e.preventDefault();
-        filterKey = key;
-        renderSeasonChips();
-        renderGroups();
-      });
-      return a;
-    };
-    seasonChipsEl.appendChild(mkChip('Tout', null));
-    buckets.forEach((b) => {
-      const lbl = `${seasonLabel[b.season] || b.season} ${b.year}`;
-      seasonChipsEl.appendChild(mkChip(lbl, b.key));
-    });
+    seasonChipsEl.appendChild(mkChip({
+      label: 'Tout', active: selectedKeys.size === 0,
+      onClick: () => { selectedKeys.clear(); apply(); },
+    }));
+    buckets.forEach((b) => seasonChipsEl.appendChild(mkChip({
+      label: labelForKey.get(b.key),
+      active: selectedKeys.has(b.key),
+      onClick: () => { toggle(selectedKeys, b.key); apply(); },
+    })));
+  }
+
+  // "Lire la sélection" — a shuffle button reflecting the live selection. Lives
+  // in the always-visible shuffle row; hidden when nothing is filtered (the
+  // "Tout en aléatoire" button already covers that case).
+  const selectionBtn = document.createElement('button');
+  selectionBtn.id = 'sh-selection';
+  selectionBtn.className = 'shuffle-btn';
+  selectionBtn.hidden = true;
+  shuffleRow.insertBefore(selectionBtn, shuffleRow.firstChild);
+  selectionBtn.addEventListener('click', async () => {
+    const matched = filteredComps();
+    if (matched.length === 0) return;
+    selectionBtn.disabled = true;
+    try {
+      const queue = await queueCompilations(matched.map((c) => c.id));
+      playQueue(queue, { sourceLabel: selectionSourceLabel() });
+    } finally {
+      selectionBtn.disabled = false;
+    }
+  });
+
+  function selectionSourceLabel() {
+    const authorPart = selectedAuthors.size
+      ? [...selectedAuthors].map(displayNameFor).join(', ')
+      : 'Tous';
+    const seasonPart = selectedKeys.size
+      ? [...selectedKeys].map((k) => labelForKey.get(k) || k).join(', ')
+      : 'toutes saisons';
+    return `Sélection · ${authorPart} · ${seasonPart}`;
+  }
+
+  function renderSelectionShuffle() {
+    const active = selectedAuthors.size > 0 || selectedKeys.size > 0;
+    const n = active ? filteredComps().length : 0;
+    selectionBtn.hidden = !active;
+    selectionBtn.disabled = active && n === 0;
+    selectionBtn.innerHTML = `🔀 Lire la sélection${n ? ` · ${n} compil${n > 1 ? 's' : ''}` : ''}`;
+  }
+
+  function apply() {
+    renderAuthorChips();
+    renderSeasonChips();
+    renderSelectionShuffle();
+    renderGroups();
+    paintAvatars(el);
   }
 
   function renderGroups() {
     yearsEl.innerHTML = '';
-    const filtered = shown.filter(matchesFilter);
+    const filtered = filteredComps();
+    if (filtered.length === 0 && comps.length > 0) {
+      yearsEl.innerHTML = '<div class="notice">Aucune compilation pour cette sélection.</div>';
+      return;
+    }
     const byYear = new Map();
     for (const c of filtered) {
       const y = c.year || new Date(c.createdAt?.toMillis?.() || Date.now()).getFullYear();
@@ -260,10 +322,8 @@ export async function mount(el, { query }) {
         yearsEl.appendChild(block);
       }
     }
-    paintAvatars(el);
   }
 
-  renderSeasonChips();
-  renderGroups();
+  apply();
   wireFilterBar(el);
 }

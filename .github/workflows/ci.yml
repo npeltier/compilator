@@ -38,16 +38,19 @@ jobs:
         run: npm ci
         working-directory: functions
 
+      - name: Install Playwright browser (Chromium, for the UI e2e)
+        run: npx playwright install --with-deps chromium
+
       - name: Unit tests (Jest, functions/)
         run: npm test
         working-directory: functions
 
-      - name: E2E (emulators + seed + integration test)
+      - name: E2E (emulators + seed + integration + UI tests)
         run: |
           npx firebase emulators:exec \
             --only auth,functions,firestore,hosting,storage \
             --project demo-compilator \
-            "npm run seed && npm run test:e2e"
+            "npm run seed && npm run test:e2e && npm run test:e2e:ui"
 
   deploy:
     name: Deploy to Firebase
