@@ -156,9 +156,13 @@ async function run() {
     await page.fill('#password', PASSWORD);
     await page.click('button[type=submit]');
     await page.waitForURL((u) => !u.pathname.includes('login'), { timeout: 20000 });
+    // #searchInput is static in index.html, so it exists before app.js finishes
+    // booting and wiring initSearch(). Wait for the home view to mount (#shuffleRow
+    // renders only after boot) so search listeners are attached before we type.
     await page.waitForSelector('#searchInput', { timeout: 20000 });
+    await page.waitForSelector('#shuffleRow', { timeout: 20000 });
     await page.addScriptTag({ content: PAGE_HELPERS });
-    ok('logged in, search box present');
+    ok('logged in, app booted, search box wired');
 
     step('search by SONG name → click → that track plays');
     await search('PTEST Song One', 'Morceaux', 'PTEST Song One');

@@ -36,7 +36,10 @@ const compilationsCollection = {
   doc: jest.fn(() => compRef),
 };
 
-const collectionGroupGet = jest.fn(async () => ({ empty: true }));
+// Snapshot shape used by both the orphan check (.empty) and findAndUpdateDoublons
+// (.forEach). Default to an empty, iterable snapshot so the doublon recompute
+// triggered inside processSongFromStaging is a clean no-op rather than throwing.
+const collectionGroupGet = jest.fn(async () => ({ empty: true, forEach: () => {} }));
 const collectionGroupMock = jest.fn(() => ({
   where: jest.fn().mockReturnThis(),
   limit: jest.fn().mockReturnThis(),

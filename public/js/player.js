@@ -109,7 +109,7 @@ export function initPlayer() {
   document.body.appendChild(bar);
 
   bar.querySelector('#pb-play').addEventListener('click', () => {
-    if (audio.paused) { userPaused = false; audio.play(); }
+    if (audio.paused) { userPaused = false; audio.play().catch(() => {}); }
     else { userPaused = true; audio.pause(); }
   });
   bar.querySelector('#pb-prev').addEventListener('click', () => playAt(cursor - 1));
@@ -151,7 +151,7 @@ export function initPlayer() {
 
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
-    if (e.code === 'Space') { e.preventDefault(); audio.paused ? audio.play() : audio.pause(); }
+    if (e.code === 'Space') { e.preventDefault(); audio.paused ? audio.play().catch(() => {}) : audio.pause(); }
   });
 
   onReactionChange((songId) => {
@@ -243,8 +243,9 @@ export async function playAt(idx) {
   try {
     await audio.play();
   } catch (err) {
-    // Autoplay blocked without a user gesture is expected — stay paused.
-    if (err?.name !== 'NotAllowedError') console.error('playback failed', err);
+    // Expected, non-fatal: NotAllowedError (autoplay blocked, stay paused) and
+    // AbortError (this play() was superseded by a quick pause()/next track).
+    if (err?.name !== 'NotAllowedError' && err?.name !== 'AbortError') console.error('playback failed', err);
   }
   updateMediaSession();
   persist();
@@ -316,7 +317,7 @@ async function restoreSession() {
 // ---- MediaSession (OS-level media keys) ----
 function setupMediaSession() {
   if (!('mediaSession' in navigator)) return;
-  navigator.mediaSession.setActionHandler('play', () => audio.play());
+  navigator.mediaSession.setActionHandler('play', () => audio.play().catch(() => {}));
   navigator.mediaSession.setActionHandler('pause', () => audio.pause());
   navigator.mediaSession.setActionHandler('previoustrack', () => playAt(cursor - 1));
   navigator.mediaSession.setActionHandler('nexttrack', () => playAt(cursor + 1));
