@@ -33,6 +33,7 @@ let queue = [];
 let cursor = -1;
 let sourceLabel = '';
 let userPaused = false;
+let skippedInARow = 0; // consecutive unavailable tracks — guards an all-missing queue
 let bar;
 const coverUrlCache = new Map(); // coverPath → resolved download URL (download URLs are stable)
 const audioUrlCache = new Map(); // storagePath → resolved download URL (same)
@@ -218,16 +219,30 @@ export async function playAt(idx) {
   applyCover(t);
   renderReactionButtons();
   queue.forEach((q, i) => q.li?.classList.toggle('playing', i === cursor));
+
+  let url;
   try {
-    const url = await resolveAudioUrl(t.storagePath);
-    audio.src = url;
-    await audio.play();
-    updateMediaSession();
-    persist();
-    prefetchAhead();
+    url = await resolveAudioUrl(t.storagePath);
   } catch (err) {
-    console.error('playback failed', err);
+    // The binary is missing/unreadable — skip to the next track rather than
+    // leaving the player stuck. Bail out if the whole queue is unavailable.
+    console.warn('Morceau indisponible, passage au suivant :', t.title, err?.code || err);
+    skippedInARow += 1;
+    if (skippedInARow >= queue.length) { skippedInARow = 0; stop(); return; }
+    return playAt(idx + 1);
   }
+  skippedInARow = 0;
+
+  audio.src = url;
+  try {
+    await audio.play();
+  } catch (err) {
+    // Autoplay blocked without a user gesture is expected — stay paused.
+    if (err?.name !== 'NotAllowedError') console.error('playback failed', err);
+  }
+  updateMediaSession();
+  persist();
+  prefetchAhead();
 }
 
 export function stop() {

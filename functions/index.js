@@ -244,4 +244,9 @@ export const onSongWrite = onDocumentWritten('compilations/{compId}/songs/{songI
 
 // Staging cleanup of /uploads/** is handled by a Cloud Storage lifecycle rule
 // configured outside of code (auto-delete after 1 day) — no scheduled function,
-// no Cloud Scheduler permissions, no per-execution cost.
+// no Cloud Scheduler permissions, no per-execution cost. The rule MUST be scoped
+// to the `uploads/` prefix (see storage.lifecycle.json): an unscoped Delete rule
+// would also reap store/, covers/ and avatars/, 404-ing songs/covers/avatars over
+// time. Apply with:
+//   gcloud storage buckets update gs://compilator-83816.appspot.com \
+//     --lifecycle-file=storage.lifecycle.json

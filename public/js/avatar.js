@@ -10,6 +10,7 @@ import {
 import { displayNameFor, getUser } from './catalog.js';
 
 const urlCache = new Map(); // avatarPath → download URL
+const missing = new Set();  // avatarPaths known to 404 — don't refetch this session
 
 const LS_KEY = 'avatar_url_cache';
 const TTL_MS = 24 * 60 * 60 * 1000; // 24 h — URLs are signed but long-lived
@@ -58,37 +59,50 @@ function initialOf(name) {
 export function avatarHTML(email, { size = 'sm', avatarPath = null } = {}) {
   const path = avatarPath ?? getUser(email)?.avatarPath ?? null;
   const initial = initialOf(displayNameFor(email));
-  const cls = `avatar avatar-${size}${path ? '' : ' placeholder'}`;
-  const dataAttr = path ? ` data-avatar="${path}"` : '';
-  return `<span class="${cls}"${dataAttr}>${path ? '' : initial}</span>`;
+  // Always start as a placeholder showing the initial; paintAvatars swaps in the
+  // image (and drops the initial) once it resolves. If there's no avatar — or it
+  // 404s — the initial stays, so we never show a blank circle.
+  const dataAttr = path && !missing.has(path) ? ` data-avatar="${path}"` : '';
+  return `<span class="avatar avatar-${size} placeholder"${dataAttr}>${initial}</span>`;
 }
 
 // Resolve every `[data-avatar]` element inside `root` to its real background
-// image. Safe to call multiple times — cached.
+// image. Safe to call multiple times — cached (successes and 404s alike).
 export async function paintAvatars(root) {
   const els = root.querySelectorAll('[data-avatar]');
   for (const el of els) {
     const path = el.dataset.avatar;
     if (!path) continue;
+    if (missing.has(path)) { el.removeAttribute('data-avatar'); continue; }
     if (urlCache.has(path)) {
-      el.style.backgroundImage = `url(${urlCache.get(path)})`;
-      el.removeAttribute('data-avatar');
+      paint(el, urlCache.get(path));
       continue;
     }
     getDownloadURL(storageRef(storage, path))
       .then((url) => {
         urlCache.set(path, url);
         lsSave(path, url);
-        el.style.backgroundImage = `url(${url})`;
-        el.removeAttribute('data-avatar');
+        paint(el, url);
       })
-      .catch(() => { /* keep placeholder */ });
+      .catch(() => {
+        // Object missing/unreadable — remember it so we don't refetch on every
+        // render, and leave the placeholder initial in place.
+        missing.add(path);
+        el.removeAttribute('data-avatar');
+      });
   }
+}
+
+function paint(el, url) {
+  el.style.backgroundImage = `url(${url})`;
+  el.classList.remove('placeholder');
+  el.textContent = '';
+  el.removeAttribute('data-avatar');
 }
 
 // Resolve a single path to its URL (used for the big profile-page avatar).
 export async function avatarUrl(path) {
-  if (!path) return null;
+  if (!path || missing.has(path)) return null;
   if (urlCache.has(path)) return urlCache.get(path);
   try {
     const url = await getDownloadURL(storageRef(storage, path));
@@ -96,6 +110,7 @@ export async function avatarUrl(path) {
     lsSave(path, url);
     return url;
   } catch (_) {
+    missing.add(path);
     return null;
   }
 }
@@ -105,5 +120,5 @@ export async function avatarUrl(path) {
 // a token that changes on overwrite, so without invalidation we'd keep showing
 // the old image.
 export function invalidateAvatar(path) {
-  if (path) { urlCache.delete(path); lsDelete(path); }
+  if (path) { urlCache.delete(path); missing.delete(path); lsDelete(path); }
 }
