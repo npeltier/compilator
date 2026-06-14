@@ -8,6 +8,7 @@ import { ensureSongsLoaded, loadAllowlist, loadCatalog } from './catalog.js';
 import { loadReactions } from './reactions.js';
 import { loadLikedCompilations } from './liked-compilations.js';
 import { initPlayer } from './player.js';
+import { initSearch } from './search.js';
 import { register, start } from './router.js';
 
 // Surface the build version on the brand's tooltip and log it. CI rewrites the
@@ -57,6 +58,7 @@ if (topbar) {
 }
 
 initPlayer();
+initSearch();
 ensureSongsLoaded(); // warm in background; not awaited — shuffle buttons await it on click
 
 register('/', () => import('./views/home.js'));

@@ -11,6 +11,7 @@
     "dev": "npx firebase emulators:start --only auth,functions,firestore,hosting,storage --project=demo-compilator --import=./emulator-data --export-on-exit",
     "dev:fresh": "npx firebase emulators:start --only auth,functions,firestore,hosting,storage --project=demo-compilator",
     "seed": "node scripts/seed.js",
+    "seed:content": "node scripts/seed-content.js",
     "test:e2e": "node test/e2e/upload-flow.test.mjs",
     "test:e2e:ui": "node test/e2e/home-filters.test.mjs",
     "optimize-covers": "node scripts/optimize-covers.js"

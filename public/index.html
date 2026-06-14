@@ -12,6 +12,11 @@
 <body>
   <nav class="topbar">
     <a class="brand" href="/">Compilator</a>
+    <div class="topbar-search">
+      <input id="searchInput" type="search" autocomplete="off" spellcheck="false"
+             placeholder="Rechercher un morceau, un auteur, une compil…" aria-label="Rechercher">
+      <div id="searchResults" class="search-results" hidden></div>
+    </div>
     <div class="nav-links">
       <a href="/upload">Prochaine compil</a>
       <a href="/migrate" data-admin-only>Import</a>
