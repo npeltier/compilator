@@ -16,8 +16,10 @@ import {
 import {
   allCompilations,
   allSongs,
+  authorSlug,
   displayNameFor,
   emailFromAuthorSlug,
+  getCompilation,
   getUser,
   trackFromSongId,
 } from '../catalog.js';
@@ -30,7 +32,7 @@ import {
 } from '../reactions.js';
 import { playQueue } from '../player.js';
 import { queueAuthor } from '../shuffle.js';
-import { avatarUrl } from '../avatar.js';
+import { avatarHTML, avatarUrl, paintAvatars } from '../avatar.js';
 import { filterBarHTML, wireFilterBar } from '../filter-bar.js';
 
 function escape(s) {
@@ -85,6 +87,15 @@ export async function mount(el, { params }) {
         </p>
         <ul id="hisLikesList" class="likes-list"></ul>
         <div id="hisLikesEmpty" class="notice" hidden>Pas encore de coups de cœur.</div>
+      </section>
+
+      <section class="section">
+        <h3>Ses compilations aimées <span id="hisLikedCompsCount" class="eyebrow" style="float:right"></span></h3>
+        <p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 16px;">
+          Les compilations qu'il a aimées, n'importe où dans le catalogue.
+        </p>
+        <div id="hisLikedComps"></div>
+        <div id="hisLikedCompsEmpty" class="notice" hidden>Pas encore de compilation aimée.</div>
       </section>
 
       <section class="section">
@@ -259,6 +270,48 @@ export async function mount(el, { params }) {
   // Fetch the author's own ❤️ likes (rules let any allowlisted user read
   // others' reactions; we only display likes, not dislikes).
   renderHisLikes().catch((err) => console.warn('hisLikes fetch failed', err));
+
+  // Fetch the author's liked compilations (same read permission as reactions).
+  renderHisLikedComps().catch((err) => console.warn('hisLikedComps fetch failed', err));
+
+  async function renderHisLikedComps() {
+    const gridWrap = el.querySelector('#hisLikedComps');
+    const emptyEl = el.querySelector('#hisLikedCompsEmpty');
+    const countEl = el.querySelector('#hisLikedCompsCount');
+    const snap = await getDocs(collection(db, 'users', emailKey, 'likedCompilations'));
+    // Resolve to compilations still in the catalog, newest first.
+    const comps = snap.docs.map((d) => getCompilation(d.id)).filter(Boolean)
+      .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+    countEl.textContent = comps.length ? `${comps.length} compilation${comps.length > 1 ? 's' : ''}` : '';
+    emptyEl.hidden = comps.length > 0;
+
+    const grid = document.createElement('div');
+    grid.className = 'cover-grid';
+    comps.forEach((c) => {
+      const card = document.createElement('div');
+      card.className = 'cover-card';
+      const firstChar = (c.title || '?')[0].toUpperCase();
+      card.innerHTML = `
+        <a class="cover-card-art" href="/c/${c.id}">
+          <div class="art ${c.coverPath ? '' : 'placeholder'}">${c.coverPath ? '' : firstChar}</div>
+          <div class="title">${escape(c.title)}</div>
+        </a>
+        <a class="cover-card-author" href="/author/${authorSlug(c.author)}">
+          ${avatarHTML(c.author, { size: 'xs' })}
+          <span class="author">${escape(displayNameFor(c.author))}</span>
+        </a>
+      `;
+      grid.appendChild(card);
+      if (c.coverPath) {
+        getDownloadURL(storageRef(storage, c.coverPath))
+          .then((url) => { card.querySelector('.art').style.backgroundImage = `url(${url})`; })
+          .catch(() => {});
+      }
+    });
+    gridWrap.innerHTML = '';
+    gridWrap.appendChild(grid);
+    paintAvatars(gridWrap);
+  }
 
   async function renderHisLikes() {
     const listEl = el.querySelector('#hisLikesList');

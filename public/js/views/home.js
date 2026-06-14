@@ -5,6 +5,7 @@ import { auth, db, storage } from '../firebase-init.js';
 import { nextCompilationSlot, slotLabel, deadlineLabel } from '../slot.js';
 import { allCompilations, authorSlug, displayNameFor } from '../catalog.js';
 import { likeCount } from '../reactions.js';
+import { likedCompCount, likedCompilationIds } from '../liked-compilations.js';
 import {
   queueAllSongs,
   queueAllExceptDisliked,
@@ -107,6 +108,7 @@ export async function mount(el, { query }) {
     { id: 'sh-all', label: '🔀 Tout en aléatoire', show: comps.length > 0, fn: async () => playQueue(await queueAllSongs(), { sourceLabel: 'Tout en aléatoire' }) },
     { id: 'sh-clean', label: 'Tout sauf les 😬', show: comps.length > 0, fn: async () => playQueue(await queueAllExceptDisliked(), { sourceLabel: 'Tout sauf les �' }) },
     { id: 'sh-liked', label: '❤️ Mes coups de cœur', show: likeCount() > 0, fn: async () => playQueue(await queueLikedSongs(), { sourceLabel: 'Mes coups de cœur' }) },
+    { id: 'sh-liked-comps', label: '❤️ Mes compilations aimées', show: likedCompCount() > 0, fn: async () => playQueue(await queueCompilations(likedCompilationIds()), { sourceLabel: 'Mes compilations aimées' }) },
   ];
   for (const b of buttons) {
     if (!b.show) continue;

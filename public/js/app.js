@@ -5,6 +5,7 @@ import { isAdminSync, requireAuth } from './auth-guard.js';
 import { avatarHTML } from './avatar.js';
 import { ensureSongsLoaded, loadAllowlist, loadCatalog } from './catalog.js';
 import { loadReactions } from './reactions.js';
+import { loadLikedCompilations } from './liked-compilations.js';
 import { initPlayer } from './player.js';
 import { register, start } from './router.js';
 
@@ -27,6 +28,7 @@ document.getElementById('who').innerHTML = avatarHTML(user.email);
 await Promise.all([
   loadCatalog(),
   loadReactions(user.email),
+  loadLikedCompilations(user.email),
   // Allowlist is admin-readable only; non-admins skip the fetch (rules would
   // reject it anyway). Used to populate "assign author" dropdowns with users
   // who haven't signed in yet.

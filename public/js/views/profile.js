@@ -16,15 +16,27 @@ import {
 import {
   ref as storageRef,
   uploadBytes,
+  getDownloadURL,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js';
 import {
   likedSongIds,
   onChange as onReactionChange,
   toggleLike,
 } from '../reactions.js';
-import { trackFromSongId, updateUserLocal } from '../catalog.js';
+import {
+  likedCompilationIds,
+  toggleCompLike,
+  onChange as onCompLikeChange,
+} from '../liked-compilations.js';
+import {
+  authorSlug,
+  displayNameFor,
+  getCompilation,
+  trackFromSongId,
+  updateUserLocal,
+} from '../catalog.js';
 import { playQueue } from '../player.js';
-import { avatarUrl, invalidateAvatar } from '../avatar.js';
+import { avatarHTML, avatarUrl, invalidateAvatar, paintAvatars } from '../avatar.js';
 
 
 document.getElementById('logout').addEventListener('click', (e) => { e.preventDefault(); logout(); });
@@ -93,6 +105,12 @@ export async function mount(el) {
 
         <button type="submit" class="btn-accent" style="margin-top:24px;">Enregistrer</button>
       </form>
+
+      <section class="section" style="margin-top:64px;">
+        <h3>Mes compilations aimées <span id="likedCompsCount" class="eyebrow" style="float:right"></span></h3>
+        <div id="likedComps"></div>
+        <div id="likedCompsEmpty" class="notice" hidden>Aucune compilation aimée pour l'instant. Mets un ❤️ depuis n'importe quelle compilation.</div>
+      </section>
 
       <section class="section" style="margin-top:64px;">
         <h3>Mes coups de cœur <span id="likesCount" class="eyebrow" style="float:right"></span></h3>
@@ -233,6 +251,50 @@ export async function mount(el) {
   renderLikes();
   const unsub = onReactionChange(renderLikes);
 
+  // ---- Liked compilations ----
+  const likedCompsEl = el.querySelector('#likedComps');
+  const likedCompsEmptyEl = el.querySelector('#likedCompsEmpty');
+  const likedCompsCountEl = el.querySelector('#likedCompsCount');
+
+  function renderLikedComps() {
+    likedCompsEl.innerHTML = '';
+    // Drop ids whose compilation is no longer in the catalog (deleted).
+    const comps = likedCompilationIds().map(getCompilation).filter(Boolean);
+    comps.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+    likedCompsCountEl.textContent = comps.length ? `${comps.length} compilation${comps.length > 1 ? 's' : ''}` : '';
+    likedCompsEmptyEl.hidden = comps.length > 0;
+
+    const grid = document.createElement('div');
+    grid.className = 'cover-grid';
+    comps.forEach((c) => {
+      const card = document.createElement('div');
+      card.className = 'cover-card';
+      const firstChar = (c.title || '?')[0].toUpperCase();
+      card.innerHTML = `
+        <a class="cover-card-art" href="/c/${c.id}">
+          <div class="art ${c.coverPath ? '' : 'placeholder'}">${c.coverPath ? '' : firstChar}</div>
+          <div class="title">${escape(c.title)}</div>
+        </a>
+        <a class="cover-card-author" href="/author/${authorSlug(c.author)}">
+          ${avatarHTML(c.author, { size: 'xs' })}
+          <span class="author">${escape(displayNameFor(c.author))}</span>
+        </a>
+        <button class="lk-unlike" title="Retirer le ❤️" aria-label="Retirer">❤️</button>
+      `;
+      card.querySelector('.lk-unlike').addEventListener('click', () => toggleCompLike(c.id));
+      grid.appendChild(card);
+      if (c.coverPath) {
+        getDownloadURL(storageRef(storage, c.coverPath))
+          .then((url) => { card.querySelector('.art').style.backgroundImage = `url(${url})`; })
+          .catch(() => {});
+      }
+    });
+    likedCompsEl.appendChild(grid);
+    paintAvatars(likedCompsEl);
+  }
+  renderLikedComps();
+  const unsubCompLike = onCompLikeChange(renderLikedComps);
+
   // ---- Password change ----
   el.querySelector('#pwdForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -275,5 +337,5 @@ export async function mount(el) {
     }
   });
 
-  return () => unsub();
+  return () => { unsub(); unsubCompLike(); };
 }

@@ -72,6 +72,14 @@ service cloud.firestore {
         allow read: if isAllowlisted();
         allow write: if isSignedIn() && callerEmail() == email;
       }
+
+      // Per-user ❤️ likes on whole compilations. Same access shape as
+      // reactions: any allowlisted user can read (so an author page could
+      // surface "ses compilations aimées"), only the owner can write.
+      match /likedCompilations/{compId} {
+        allow read: if isAllowlisted();
+        allow write: if isSignedIn() && callerEmail() == email;
+      }
     }
 
     // Compilations: allowlisted users read; the owning user (author == email)

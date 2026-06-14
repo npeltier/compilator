@@ -26,6 +26,11 @@ import {
   onChange as onReactionChange,
 } from '../reactions.js';
 import {
+  isCompLiked,
+  toggleCompLike,
+  onChange as onCompLikeChange,
+} from '../liked-compilations.js';
+import {
   allAuthorOptions,
   authorSlug,
   displayNameFor,
@@ -158,6 +163,7 @@ export async function mount(el, { params }) {
           <div class="stats">${songs.length} morceau${songs.length > 1 ? 'x' : ''} · ${fmt(totalDur)}</div>
           <div class="actions">
             <button class="btn-accent" id="playAll">▶ Tout écouter</button>
+            <button class="btn-ghost" id="likeComp" title="J'aime cette compilation" aria-label="J'aime cette compilation">🤍 J'aime</button>
             ${canEdit ? '<button class="btn-ghost" id="editBtn">✏ Modifier</button>' : ''}
           </div>
         </div>
@@ -207,7 +213,17 @@ export async function mount(el, { params }) {
     main.querySelector('#playAll').addEventListener('click', () => {
       playQueue(songs, { startIndex: 0, sourceLabel: liveCompTitle });
     });
+    main.querySelector('#likeComp').addEventListener('click', () => toggleCompLike(id));
+    renderCompLike();
     main.querySelector('#editBtn')?.addEventListener('click', () => renderEdit());
+  }
+
+  function renderCompLike() {
+    const btn = main.querySelector('#likeComp');
+    if (!btn) return;
+    const liked = isCompLiked(id);
+    btn.innerHTML = liked ? '❤️ Aimée' : '🤍 J\'aime';
+    btn.classList.toggle('active', liked);
   }
 
   function renderRowReactions(songId) {
@@ -548,5 +564,6 @@ export async function mount(el, { params }) {
 
   renderView();
   const unsub = onReactionChange((songId) => renderRowReactions(songId));
-  return () => unsub();
+  const unsubCompLike = onCompLikeChange((compId) => { if (compId === id) renderCompLike(); });
+  return () => { unsub(); unsubCompLike(); };
 }
