@@ -727,6 +727,42 @@ body.has-player { padding-bottom: 100px; }
   font-size: 13px;
 }
 
+/* -------- sticky collapsible filter bar -------- */
+.filter-bar {
+  position: sticky;
+  top: 8px;
+  z-index: 50;
+  margin-bottom: 32px;
+}
+.filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: 8px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.filter-toggle:hover { color: var(--ink); border-color: var(--ink); }
+.filter-caret { transition: transform 160ms ease; font-size: 10px; }
+.filter-bar:not(.collapsed) .filter-caret { transform: rotate(180deg); }
+.filter-body {
+  margin-top: 12px;
+  padding: 16px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+.filter-bar.collapsed .filter-body { display: none; }
+.filter-body .chip-row { margin-bottom: 0; }
+.filter-body .chip-row:empty { display: none; }
+.filter-body .chip-row + .chip-row:not(:empty) { margin-top: 10px; }
+
 /* -------- author / filter chips -------- */
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 32px; }
 .chip {

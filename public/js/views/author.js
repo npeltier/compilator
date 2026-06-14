@@ -31,6 +31,7 @@ import {
 import { playQueue } from '../player.js';
 import { queueAuthor } from '../shuffle.js';
 import { avatarUrl } from '../avatar.js';
+import { filterBarHTML, wireFilterBar } from '../filter-bar.js';
 
 function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -68,7 +69,7 @@ export async function mount(el, { params }) {
         </div>
       </header>
 
-      <div class="chip-row" id="seasonChips"></div>
+      ${filterBarHTML(`<div class="chip-row" id="seasonChips"></div>`)}
       <div class="shuffle-row" id="authorShuffleRow"></div>
 
       <section class="section">
@@ -203,6 +204,9 @@ export async function mount(el, { params }) {
 
   renderChips();
   renderShuffle();
+  // No season/year buckets → nothing to filter, so drop the bar entirely.
+  if (buckets.length === 0) el.querySelector('#filterBar')?.remove();
+  else wireFilterBar(el);
   renderCompilationsGrid(el.querySelector('#years'), comps, true);
 
   function renderReactions() {

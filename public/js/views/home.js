@@ -17,6 +17,7 @@ import {
   getDownloadURL,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js';
 import { avatarHTML, paintAvatars } from '../avatar.js';
+import { filterBarHTML, wireFilterBar } from '../filter-bar.js';
 
 function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -43,8 +44,10 @@ export async function mount(el, { query }) {
     <div class="shell">
       <div id="nextBanner"></div>
       <div class="shuffle-row" id="shuffleRow"></div>
-      <div class="chip-row" id="authorChips"></div>
-      <div class="chip-row" id="seasonChips"></div>
+      ${filterBarHTML(`
+        <div class="chip-row" id="authorChips"></div>
+        <div class="chip-row" id="seasonChips"></div>
+      `)}
       <div id="empty" class="notice" hidden>Aucune compilation pour l'instant. <a href="/upload">Crée la première</a>.</div>
       <div id="years"></div>
     </div>
@@ -262,4 +265,5 @@ export async function mount(el, { query }) {
 
   renderSeasonChips();
   renderGroups();
+  wireFilterBar(el);
 }
