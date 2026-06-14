@@ -38,8 +38,6 @@ import { playQueue } from '../player.js';
 import { avatarHTML, avatarUrl, invalidateAvatar, paintAvatars } from '../avatar.js';
 
 
-document.getElementById('logout').addEventListener('click', (e) => { e.preventDefault(); logout(); });
-
 function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -155,6 +153,8 @@ export async function mount(el) {
       </section>
     </div>
   `;
+
+  el.querySelector('#logout').addEventListener('click', (e) => { e.preventDefault(); logout(); });
 
   const emailKey = user.email.toLowerCase();
   const userDocRef = doc(db, 'users', emailKey);

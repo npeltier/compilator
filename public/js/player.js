@@ -281,8 +281,11 @@ async function restoreSession() {
     const url = await resolveAudioUrl(saved.track.storagePath);
     audio.src = url;
     audio.currentTime = saved.position || 0;
-    userPaused = !!saved.paused;
-    if (!saved.paused) await audio.play();
+    // Restore paused regardless of how the session was left: browsers block
+    // autoplay without a user gesture, so attempting play() here just logs an
+    // autoplay-policy warning and stays paused anyway. Let the user resume.
+    userPaused = true;
+    bar.querySelector('#pb-play').textContent = '▶';
     updateMediaSession();
   } catch (err) {
     /* ignore — session is best-effort */
