@@ -16,8 +16,8 @@ import {
 import {
   ref as storageRef,
   uploadBytes,
-  getDownloadURL,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js';
+import { coverUrl } from '../image-url.js';
 import {
   likedSongIds,
   onChange as onReactionChange,
@@ -339,9 +339,7 @@ export async function mount(el) {
       card.querySelector('.lk-unlike').addEventListener('click', () => toggleCompLike(c.id));
       grid.appendChild(card);
       if (c.coverPath) {
-        getDownloadURL(storageRef(storage, c.coverPath))
-          .then((url) => { card.querySelector('.art').style.backgroundImage = `url(${url})`; })
-          .catch(() => {});
+        coverUrl(c.coverPath).then((url) => { if (url) card.querySelector('.art').style.backgroundImage = `url(${url})`; });
       }
     });
     likedCompsEl.appendChild(grid);

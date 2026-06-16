@@ -3,7 +3,7 @@
 // drag-to-reorder, title/artist editing, audio re-upload, and song deletion,
 // plus a "🗑 Supprimer la compilation" button.
 
-import { auth, db, storage } from '../firebase-init.js';
+import { auth, db } from '../firebase-init.js';
 import {
   collection,
   doc,
@@ -14,10 +14,7 @@ import {
   serverTimestamp,
   writeBatch,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
-import {
-  ref as storageRef,
-  getDownloadURL,
-} from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js';
+import { coverUrl, invalidateCover } from '../image-url.js';
 import { playQueue } from '../player.js';
 import {
   getReaction,
@@ -130,10 +127,8 @@ export async function mount(el, { params }) {
     const art = main.querySelector('#hero-art');
     if (!art) return;
     if (comp.coverPath) {
-      try {
-        const url = await getDownloadURL(storageRef(storage, comp.coverPath));
-        art.style.backgroundImage = `url(${url})`;
-      } catch (_) { /* ignore */ }
+      const url = await coverUrl(comp.coverPath);
+      if (url) art.style.backgroundImage = `url(${url})`;
     } else {
       art.textContent = (liveCompTitle || '?')[0].toUpperCase();
     }
@@ -142,10 +137,8 @@ export async function mount(el, { params }) {
   async function paintDoublonCovers() {
     const covers = main.querySelectorAll('.doublon-cover[data-cover-path]');
     await Promise.all([...covers].map(async (el) => {
-      try {
-        const url = await getDownloadURL(storageRef(storage, el.dataset.coverPath));
-        el.style.backgroundImage = `url(${url})`;
-      } catch (_) { /* ignore */ }
+      const url = await coverUrl(el.dataset.coverPath);
+      if (url) el.style.backgroundImage = `url(${url})`;
     }));
   }
 
@@ -335,15 +328,16 @@ export async function mount(el, { params }) {
       try {
         const result = await uploadCover({ file, compilationId: id });
         comp.coverPath = result.coverPath;
-        // Repaint hero; cache-bust the URL because the storage path may stay
-        // identical when overwriting the same extension and browsers will keep
-        // the stale image otherwise.
+        // The cover changed: drop the cached URL so every other view re-resolves
+        // the fresh (rotated-token) one. Repaint the hero now, cache-busting the
+        // bytes since the path may stay identical when overwriting the same ext.
+        invalidateCover(comp.coverPath);
         const art = main.querySelector('#hero-art');
         if (art) {
           art.classList.remove('placeholder');
           art.textContent = '';
-          const url = await getDownloadURL(storageRef(storage, comp.coverPath));
-          art.style.backgroundImage = `url(${url}#${Date.now()})`;
+          const url = await coverUrl(comp.coverPath);
+          if (url) art.style.backgroundImage = `url(${url}#${Date.now()})`;
         }
       } catch (err) {
         showEditError(`Échec du changement de pochette : ${err.message || err}`);

@@ -1,7 +1,7 @@
 // Home view: next-slot banner, author chips, cover grid grouped by year+season,
 // plus the cross-compilation shuffle buttons (Tout / Sauf � / Mes ❤️).
 
-import { auth, db, storage } from '../firebase-init.js';
+import { auth } from '../firebase-init.js';
 import { nextCompilationSlot, slotLabel, deadlineLabel } from '../slot.js';
 import { allCompilations, displayNameFor } from '../catalog.js';
 import { likeCount } from '../reactions.js';
@@ -14,10 +14,7 @@ import {
   queueCompilations,
 } from '../shuffle.js';
 import { playQueue } from '../player.js';
-import {
-  ref as storageRef,
-  getDownloadURL,
-} from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js';
+import { coverUrl } from '../image-url.js';
 import { avatarHTML, paintAvatars } from '../avatar.js';
 import { filterBarHTML, wireFilterBar } from '../filter-bar.js';
 
@@ -33,9 +30,7 @@ const coverObserver = new IntersectionObserver((entries) => {
     coverObserver.unobserve(entry.target);
     const path = entry.target.dataset.coverPath;
     if (path) {
-      getDownloadURL(storageRef(storage, path))
-        .then((url) => { entry.target.style.backgroundImage = `url(${url})`; })
-        .catch(() => {});
+      coverUrl(path).then((url) => { if (url) entry.target.style.backgroundImage = `url(${url})`; });
     }
   }
 }, { rootMargin: '200px' });

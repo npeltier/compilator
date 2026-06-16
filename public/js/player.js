@@ -22,6 +22,7 @@ import {
   toggleLike,
   toggleDislike,
 } from './reactions.js';
+import { coverUrl } from './image-url.js';
 import { navigate } from './router.js';
 
 const SESSION_KEY = 'compilator.player.v1';
@@ -35,8 +36,7 @@ let sourceLabel = '';
 let userPaused = false;
 let skippedInARow = 0; // consecutive unavailable tracks — guards an all-missing queue
 let bar;
-const coverUrlCache = new Map(); // coverPath → resolved download URL (download URLs are stable)
-const audioUrlCache = new Map(); // storagePath → resolved download URL (same)
+const audioUrlCache = new Map(); // storagePath → resolved download URL (per-session)
 
 // Resolve a song's download URL, caching forever. Firebase download URLs embed
 // a stable token, so the same path always returns the same URL within a session.
@@ -182,19 +182,10 @@ async function applyCover(track) {
     return;
   }
   cover.classList.remove('placeholder');
-  if (coverUrlCache.has(track.coverPath)) {
-    cover.style.backgroundImage = `url(${coverUrlCache.get(track.coverPath)})`;
-    return;
-  }
-  try {
-    const url = await getDownloadURL(storageRef(storage, track.coverPath));
-    coverUrlCache.set(track.coverPath, url);
-    // Only apply if we're still on the same track.
-    if (queue[cursor]?.coverPath === track.coverPath) {
-      cover.style.backgroundImage = `url(${url})`;
-    }
-  } catch (err) {
-    /* keep placeholder */
+  const url = await coverUrl(track.coverPath);
+  // Only apply if we're still on the same track.
+  if (url && queue[cursor]?.coverPath === track.coverPath) {
+    cover.style.backgroundImage = `url(${url})`;
   }
 }
 
@@ -332,12 +323,8 @@ async function updateMediaSession() {
     album: t.compilationTitle || '',
   };
   if (t.coverPath) {
-    try {
-      const url = coverUrlCache.get(t.coverPath)
-        || await getDownloadURL(storageRef(storage, t.coverPath));
-      coverUrlCache.set(t.coverPath, url);
-      meta.artwork = [{ src: url, sizes: '512x512', type: 'image/jpeg' }];
-    } catch (_) { /* ignore */ }
+    const url = await coverUrl(t.coverPath);
+    if (url) meta.artwork = [{ src: url, sizes: '512x512', type: 'image/jpeg' }];
   }
   navigator.mediaSession.metadata = new window.MediaMetadata(meta);
 }

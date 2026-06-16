@@ -4,15 +4,12 @@
 // displayName exists yet) — emails never appear in URLs. We reverse-lookup the
 // real author email by walking the loaded compilations.
 
-import { db, storage } from '../firebase-init.js';
+import { db } from '../firebase-init.js';
 import {
   collection,
   getDocs,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
-import {
-  ref as storageRef,
-  getDownloadURL,
-} from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js';
+import { coverUrl } from '../image-url.js';
 import {
   allCompilations,
   allSongs,
@@ -359,9 +356,7 @@ export async function mount(el, { params }) {
       });
       grid.appendChild(card);
       if (c.coverPath) {
-        getDownloadURL(storageRef(storage, c.coverPath))
-          .then((url) => { card.querySelector('.art').style.backgroundImage = `url(${url})`; })
-          .catch(() => {});
+        coverUrl(c.coverPath).then((url) => { if (url) card.querySelector('.art').style.backgroundImage = `url(${url})`; });
       }
     });
     gridWrap.innerHTML = '';
@@ -443,9 +438,7 @@ function renderCompilationsGrid(yearsEl, comps, flat = false) {
         `;
         grid.appendChild(card);
         if (c.coverPath) {
-          getDownloadURL(storageRef(storage, c.coverPath))
-            .then((url) => { card.querySelector('.art').style.backgroundImage = `url(${url})`; })
-            .catch(() => {});
+          coverUrl(c.coverPath).then((url) => { if (url) card.querySelector('.art').style.backgroundImage = `url(${url})`; });
         }
       }
     }
@@ -477,9 +470,7 @@ function renderCompilationsGrid(yearsEl, comps, flat = false) {
       `;
       grid.appendChild(card);
       if (c.coverPath) {
-        getDownloadURL(storageRef(storage, c.coverPath))
-          .then((url) => { card.querySelector('.art').style.backgroundImage = `url(${url})`; })
-          .catch(() => {});
+        coverUrl(c.coverPath).then((url) => { if (url) card.querySelector('.art').style.backgroundImage = `url(${url})`; });
       }
     }
     yearsEl.appendChild(block);
