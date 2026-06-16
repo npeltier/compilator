@@ -32,6 +32,7 @@ import {
   authorSlug,
   displayNameFor,
   getCompilation,
+  removeCompilationLocal,
 } from '../catalog.js';
 import { isAdminSync } from '../auth-guard.js';
 import { deleteCompilation, replaceSongBinary, uploadCover } from '../upload-pipeline.js';
@@ -96,6 +97,12 @@ export async function mount(el, { params }) {
   const emailKey = user.email.toLowerCase();
   const canEdit = comp.author === emailKey || isAdminSync(user.email);
 
+  // Drafts are private to their author (and admins) until published.
+  if (comp.status === 'draft' && !canEdit) {
+    main.innerHTML = '<div class="notice">Compilation introuvable.</div>';
+    return;
+  }
+
   const songsSnap = await getDocs(query(collection(db, 'compilations', id, 'songs'), orderBy('order', 'asc')));
   let songs = songsSnap.docs.map((d) => {
     const s = d.data();
@@ -150,10 +157,11 @@ export async function mount(el, { params }) {
       <div class="detail-hero">
         <div class="art ${comp.coverPath ? '' : 'placeholder'}" id="hero-art"></div>
         <div class="meta">
-          <p class="eyebrow">${comp.season === 'noel' ? '❄ Noël' : '☀ Été'} ${comp.year || ''}</p>
+          <p class="eyebrow">${comp.season === 'noel' ? '❄ Noël' : '☀ Été'} ${comp.year || ''}${comp.status === 'draft' ? ' · brouillon' : ''}</p>
           <h1>${escape(liveCompTitle)}</h1>
           <div class="by">par <a class="by-link" href="/author/${authorSlug(comp.author)}">${avatarHTML(comp.author, { size: 'sm' })}<span>${escape(displayNameFor(comp.author))}</span></a></div>
           <div class="stats">${songs.length} morceau${songs.length > 1 ? 'x' : ''} · ${fmt(totalDur)}</div>
+          ${comp.status === 'draft' && canEdit ? '<div class="notice" style="margin:12px 0;">Brouillon non publié — visible seulement par toi. <a href="/upload">Continuer / publier</a></div>' : ''}
           <div class="actions">
             <button class="btn-accent" id="playAll">▶ Tout écouter</button>
             <button class="btn-ghost" id="likeComp" title="J'aime cette compilation" aria-label="J'aime cette compilation">🤍 J'aime</button>
@@ -459,6 +467,7 @@ export async function mount(el, { params }) {
     btn.textContent = 'Suppression…';
     try {
       await deleteCompilation(id);
+      removeCompilationLocal(id);
       navigate('/');
     } catch (err) {
       console.error('deleteCompilation', err);

@@ -11,7 +11,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
 import { coverUrl } from '../image-url.js';
 import {
-  allCompilations,
+  visibleCompilations,
   allSongs,
   displayNameFor,
   emailFromAuthorSlug,
@@ -65,7 +65,7 @@ export async function mount(el, { params }) {
   }
   const userDoc = getUser(emailKey);
   const displayName = displayNameFor(emailKey);
-  const comps = allCompilations()
+  const comps = visibleCompilations()
     .filter((c) => c.author === emailKey)
     .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
 

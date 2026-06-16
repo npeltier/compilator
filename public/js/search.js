@@ -8,8 +8,8 @@
 //   - song        → play its compilation starting at that track
 
 import {
-  allCompilations,
-  allSongs,
+  visibleCompilations,
+  visibleSongs,
   authorSlug,
   displayNameFor,
   ensureSongsLoaded,
@@ -55,7 +55,7 @@ export function initSearch() {
   function pickSong(songId) {
     const t = trackFromSongId(songId);
     if (!t) return;
-    const queue = allSongs()
+    const queue = visibleSongs()
       .filter((s) => s.compilationId === t.compilationId)
       .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
       .map((s) => trackFromSongId(s.id))
@@ -69,18 +69,18 @@ export function initSearch() {
     const q = norm(input.value.trim());
     if (!q) { close(); return; }
 
-    const comps = allCompilations()
+    const comps = visibleCompilations()
       .filter((c) => norm(c.title).includes(q))
       .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0))
       .slice(0, MAX_PER_GROUP);
 
-    const authorEmails = [...new Set(allCompilations().map((c) => c.author).filter(Boolean))];
+    const authorEmails = [...new Set(visibleCompilations().map((c) => c.author).filter(Boolean))];
     const authors = authorEmails
       .filter((e) => norm(displayNameFor(e)).includes(q))
       .sort((a, b) => displayNameFor(a).localeCompare(displayNameFor(b), 'fr'))
       .slice(0, MAX_PER_GROUP);
 
-    const songs = allSongs()
+    const songs = visibleSongs()
       .filter((s) => norm(s.title).includes(q) || norm(s.artist).includes(q))
       .slice(0, MAX_PER_GROUP)
       .map((s) => trackFromSongId(s.id))

@@ -147,6 +147,30 @@ export function getSong(id) { return songsById.get(id); }
 export function allSongs() { return [...songsById.values()]; }
 export function getCompilation(id) { return compilationsById.get(id); }
 export function allCompilations() { return [...compilationsById.values()]; }
+
+// Draft visibility. Drafts are private to their author (and admins) until
+// published; everyone else must not see them in listings, search or shuffle.
+// The current viewer is set once at boot (see app.js). Reads are allowlisted at
+// the DB level — same friends-only tradeoff as reactions — so this is a
+// client-side filter, not a security boundary.
+let viewerEmail = '';
+let viewerIsAdmin = false;
+export function setViewer(email, isAdmin) {
+  viewerEmail = (email || '').toLowerCase();
+  viewerIsAdmin = !!isAdmin;
+}
+export function isCompVisible(comp) {
+  if (!comp) return false;
+  return comp.status !== 'draft' || viewerIsAdmin || comp.author === viewerEmail;
+}
+// Compilations the current viewer may see (published + own/all drafts).
+export function visibleCompilations() {
+  return allCompilations().filter(isCompVisible);
+}
+// Songs whose compilation is visible to the viewer — used by shuffle queues.
+export function visibleSongs() {
+  return allSongs().filter((s) => isCompVisible(compilationsById.get(s.compilationId)));
+}
 export function getUser(email) {
   return email ? usersByEmail.get(email.toLowerCase()) || null : null;
 }
@@ -258,6 +282,20 @@ export function updateUserLocal(email, patch) {
   const u = usersByEmail.get(key) || { email: key };
   Object.assign(u, patch);
   usersByEmail.set(key, u);
+}
+
+// Insert or update a compilation in the in-memory catalog after a create/save,
+// so the home banner, the upload editor and /c/:id reflect it without a reload.
+export function upsertCompilationLocal(id, patch) {
+  const existing = compilationsById.get(id) || { id };
+  const merged = { ...existing, ...patch, id };
+  compilationsById.set(id, merged);
+  return merged;
+}
+
+// Remove a compilation from the in-memory catalog after a delete.
+export function removeCompilationLocal(id) {
+  compilationsById.delete(id);
 }
 
 // Build a Track (the shape used by the player queue) from a songId.

@@ -16,6 +16,7 @@
     "test:e2e": "node test/e2e/upload-flow.test.mjs",
     "test:e2e:ui": "node test/e2e/home-filters.test.mjs",
     "test:e2e:player": "node test/e2e/player.test.mjs",
+    "test:e2e:upload-draft": "node test/e2e/upload-draft.test.mjs",
     "optimize-covers": "node scripts/optimize-covers.js"
   },
   "devDependencies": {

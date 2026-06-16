@@ -2,8 +2,8 @@
 // All return Track[] in shape expected by player.playQueue().
 
 import {
-  allCompilations,
-  allSongs,
+  visibleCompilations,
+  visibleSongs,
   ensureSongsLoaded,
   trackFromSongId,
 } from './catalog.js';
@@ -21,7 +21,7 @@ function shuffle(arr) {
 // "Tout en aléatoire" — every song, including disliked ones.
 export async function queueAllSongs() {
   await ensureSongsLoaded();
-  return shuffle(allSongs().map((s) => trackFromSongId(s.id)).filter(Boolean));
+  return shuffle(visibleSongs().map((s) => trackFromSongId(s.id)).filter(Boolean));
 }
 
 // "Sauf les 😬" — every song minus the user's disliked ones.
@@ -29,7 +29,7 @@ export async function queueAllExceptDisliked() {
   await ensureSongsLoaded();
   const skip = new Set(dislikedSongIds());
   return shuffle(
-    allSongs()
+    visibleSongs()
       .filter((s) => !skip.has(s.id))
       .map((s) => trackFromSongId(s.id))
       .filter(Boolean),
@@ -49,11 +49,11 @@ export async function queueSeasonYear(season, year) {
   await ensureSongsLoaded();
   const yearNum = typeof year === 'string' ? parseInt(year, 10) : year;
   const compIds = new Set(
-    allCompilations()
+    visibleCompilations()
       .filter((c) => c.season === season && c.year === yearNum)
       .map((c) => c.id),
   );
-  const tracks = allSongs()
+  const tracks = visibleSongs()
     .filter((s) => compIds.has(s.compilationId))
     .map((s) => trackFromSongId(s.id))
     .filter(Boolean);
@@ -67,7 +67,7 @@ export async function queueCompilations(compIds) {
   await ensureSongsLoaded();
   const set = compIds instanceof Set ? compIds : new Set(compIds);
   return shuffle(
-    allSongs()
+    visibleSongs()
       .filter((s) => set.has(s.compilationId))
       .map((s) => trackFromSongId(s.id))
       .filter(Boolean),
@@ -80,9 +80,9 @@ export async function queueAuthor(authorEmail) {
   await ensureSongsLoaded();
   const key = (authorEmail || '').toLowerCase();
   const compIds = new Set(
-    allCompilations().filter((c) => c.author === key).map((c) => c.id),
+    visibleCompilations().filter((c) => c.author === key).map((c) => c.id),
   );
-  const tracks = allSongs()
+  const tracks = visibleSongs()
     .filter((s) => compIds.has(s.compilationId))
     .map((s) => trackFromSongId(s.id))
     .filter(Boolean);

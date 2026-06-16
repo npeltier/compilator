@@ -3,7 +3,7 @@
 
 import { auth } from '../firebase-init.js';
 import { nextCompilationSlot, slotLabel, deadlineLabel } from '../slot.js';
-import { allCompilations, displayNameFor } from '../catalog.js';
+import { visibleCompilations, displayNameFor } from '../catalog.js';
 import { likeCount } from '../reactions.js';
 import { likedCompCount, likedCompilationIds } from '../liked-compilations.js';
 import {
@@ -52,7 +52,7 @@ export async function mount(el, { query }) {
 
   const user = auth.currentUser;
   const emailKey = user.email.toLowerCase();
-  const comps = allCompilations()
+  const comps = visibleCompilations()
     .slice()
     .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
 
@@ -81,7 +81,7 @@ export async function mount(el, { query }) {
           <div class="head">${escape(mine.title || slotTxt)}</div>
           <div class="sub">${mine.trackCount || 0} morceau${(mine.trackCount || 0) > 1 ? 'x' : ''} déjà déposés · à rendre avant le ${deadTxt}.</div>
         </div>
-        <a class="cta" href="/c/${mine.id}">Reprendre</a>
+        <a class="cta" href="/upload">Reprendre</a>
       </section>
     `;
   } else {
