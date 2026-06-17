@@ -20,11 +20,10 @@ import {
   trackFromSongId,
 } from '../catalog.js';
 import {
-  dislikedSongIds,
-  likedSongIds,
+  emojisFromDoc,
+  getMyEmojis,
   onChange as onReactionChange,
-  toggleDislike,
-  toggleLike,
+  toggleEmoji,
 } from '../reactions.js';
 import { playQueue } from '../player.js';
 import { queueAuthor } from '../shuffle.js';
@@ -113,7 +112,7 @@ export async function mount(el, { params }) {
       <section class="section">
         <h3>Mes réactions sur ses morceaux <span id="rxCount" class="eyebrow" style="float:right"></span></h3>
         <p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 16px;">
-          Tes ❤️ et 😬 sur les morceaux issus de ses compilations.
+          Tes réactions sur les morceaux issus de ses compilations.
         </p>
         <ul id="rxList" class="likes-list"></ul>
         <div id="rxEmpty" class="notice" hidden>Aucune réaction sur ses morceaux pour l'instant.</div>
@@ -236,22 +235,21 @@ export async function mount(el, { params }) {
     const rxList = el.querySelector('#rxList');
     const rxEmpty = el.querySelector('#rxEmpty');
     const rxCount = el.querySelector('#rxCount');
-    const likes = likedSongIds().filter((id) => songIdSet.has(id));
-    const dislikes = dislikedSongIds().filter((id) => songIdSet.has(id));
-    const all = [
-      ...likes.map((songId) => ({ songId, kind: 'like' })),
-      ...dislikes.map((songId) => ({ songId, kind: 'dislike' })),
-    ];
+    // One row per (song, emoji) the viewer applied on this author's songs.
+    const entries = [];
+    for (const id of songIdSet) {
+      for (const emoji of getMyEmojis(id)) entries.push({ songId: id, emoji });
+    }
     rxList.innerHTML = '';
-    rxCount.textContent = all.length ? `${all.length}` : '';
-    rxEmpty.hidden = all.length > 0;
+    rxCount.textContent = entries.length ? `${entries.length}` : '';
+    rxEmpty.hidden = entries.length > 0;
 
-    const playableLikes = likes.map((id) => trackFromSongId(id)).filter(Boolean);
+    const taggedIds = [...new Set(entries.map((e) => e.songId))];
+    const playable = taggedIds.map((id) => trackFromSongId(id)).filter(Boolean);
 
-    all.forEach((entry) => {
+    entries.forEach((entry) => {
       const t = trackFromSongId(entry.songId);
       if (!t) return;
-      const isLike = entry.kind === 'like';
       const li = document.createElement('li');
       li.innerHTML = `
         <button class="lk-play" title="Jouer ce morceau">▶</button>
@@ -259,19 +257,14 @@ export async function mount(el, { params }) {
           <div class="title">${escape(t.title)}</div>
           <div class="artist">${escape(t.artist)} ${t.compilationId ? `· <a href="/c/${t.compilationId}">${escape(t.compilationTitle)}</a>` : ''}</div>
         </div>
-        <button class="lk-rx" title="${isLike ? 'Retirer le ❤️' : 'Retirer le 😬'}" aria-label="Retirer">${isLike ? '❤️' : '😬'}</button>
+        <button class="lk-rx" title="Retirer ${entry.emoji}" aria-label="Retirer ${entry.emoji}">${entry.emoji}</button>
       `;
       li.querySelector('.lk-play').addEventListener('click', () => {
-        if (isLike && playableLikes.length > 0) {
-          const idx = playableLikes.findIndex((p) => p.songId === entry.songId);
-          playQueue(playableLikes, { startIndex: Math.max(0, idx), sourceLabel: `❤️ chez ${displayName}` });
-        } else {
-          playQueue([t], { startIndex: 0, sourceLabel: `Chez ${displayName}` });
-        }
+        const idx = playable.findIndex((p) => p.songId === entry.songId);
+        playQueue(playable, { startIndex: Math.max(0, idx), sourceLabel: `Mes réactions chez ${displayName}` });
       });
       li.querySelector('.lk-rx').addEventListener('click', async () => {
-        if (isLike) await toggleLike(entry.songId);
-        else await toggleDislike(entry.songId);
+        await toggleEmoji(entry.songId, entry.emoji);
       });
       rxList.appendChild(li);
     });
@@ -371,7 +364,7 @@ export async function mount(el, { params }) {
     const countEl = el.querySelector('#hisLikesCount');
     const snap = await getDocs(collection(db, 'users', emailKey, 'reactions'));
     const likedIds = [];
-    snap.forEach((d) => { if (d.data().value === 'like') likedIds.push(d.id); });
+    snap.forEach((d) => { if (emojisFromDoc(d.data()).includes('❤️')) likedIds.push(d.id); });
 
     // Resolve to playable tracks, skipping any orphans (song no longer in catalog).
     const tracks = likedIds.map((id) => trackFromSongId(id)).filter(Boolean);

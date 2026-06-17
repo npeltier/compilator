@@ -16,6 +16,7 @@
     "test:e2e": "node test/e2e/upload-flow.test.mjs",
     "test:e2e:ui": "node test/e2e/home-filters.test.mjs",
     "test:e2e:player": "node test/e2e/player.test.mjs",
+    "test:e2e:reactions": "node test/e2e/emoji-reactions.test.mjs",
     "test:e2e:upload-draft": "node test/e2e/upload-draft.test.mjs",
     "optimize-covers": "node scripts/optimize-covers.js"
   },
@@ -31,6 +32,9 @@
   "main": "index.js",
   "directories": {
     "test": "test"
+  },
+  "optionalDependencies": {
+    "fsevents": "^2.3.3"
   },
   "dependencies": {
     "abbrev": "^4.0.0",
@@ -193,7 +197,6 @@
     "forwarded": "^0.2.0",
     "fresh": "^0.5.2",
     "fs-extra": "^10.1.0",
-    "fsevents": "^2.3.3",
     "function-bind": "^1.1.2",
     "functional-red-black-tree": "^1.0.1",
     "fuzzy": "^0.1.3",

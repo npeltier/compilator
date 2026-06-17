@@ -63,11 +63,12 @@ service cloud.firestore {
                        .hasOnly(['displayName', 'avatarPath', 'updatedAt']);
       allow delete: if false;
 
-      // Per-user reactions (❤️ like / 😬 dislike) on songs. Any allowlisted
-      // user can read them so the author-profile page can surface "ses coups
-      // de cœur"; only the owning user can write their own reactions. The UI
-      // hides others' dislikes — anyone querying Firestore directly could
-      // still see them, but this is a friends-only site, accepted tradeoff.
+      // Per-user emoji reactions on songs: { emojis: string[], at }. A user can
+      // apply several emojis to one song. Any allowlisted user can read them so
+      // the author-profile page can surface "ses coups de cœur" and the song
+      // rows can show the community aggregate; only the owning user can write
+      // their own reactions. Legacy docs ({ value: 'like'|'dislike' }) are still
+      // readable and normalized client-side. Friends-only site, accepted tradeoff.
       match /reactions/{songId} {
         allow read: if isAllowlisted();
         allow write: if isSignedIn() && callerEmail() == email;
@@ -109,6 +110,13 @@ service cloud.firestore {
     // Collection-group read for `songs` so the client can build the catalog
     // in one query instead of N+1. Per-compilation song writes are gated above.
     match /{path=**}/songs/{songId} {
+      allow read: if isAllowlisted();
+    }
+
+    // Collection-group read for `reactions` so the client can aggregate the
+    // community emoji reactions across all users in one query. Per-user writes
+    // stay gated under /users/{email}/reactions above.
+    match /{path=**}/reactions/{songId} {
       allow read: if isAllowlisted();
     }
 

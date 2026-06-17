@@ -1,22 +1,22 @@
 // Home view: next-slot banner, author chips, cover grid grouped by year+season,
-// plus the cross-compilation shuffle buttons (Tout / Sauf � / Mes ❤️).
+// plus the cross-compilation shuffle buttons and the emoji tag filter.
 
 import { auth } from '../firebase-init.js';
 import { nextCompilationSlot, slotLabel, deadlineLabel } from '../slot.js';
 import { visibleCompilations, displayNameFor } from '../catalog.js';
-import { likeCount } from '../reactions.js';
+import { getMyEmojis, myEmojiSongIds } from '../reactions.js';
 import { likedCompCount, likedCompilationIds } from '../liked-compilations.js';
 import {
   queueAllSongs,
-  queueAllExceptDisliked,
-  queueLikedSongs,
   queueSeasonYear,
   queueCompilations,
+  queueByMyEmojis,
 } from '../shuffle.js';
 import { playQueue } from '../player.js';
 import { coverUrl } from '../image-url.js';
 import { avatarHTML, paintAvatars } from '../avatar.js';
 import { filterBarHTML, wireFilterBar } from '../filter-bar.js';
+import { renderPalette } from '../reaction-control.js';
 
 function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -44,6 +44,10 @@ export async function mount(el, { query }) {
       ${filterBarHTML(`
         <div class="chip-row" id="authorChips"></div>
         <div class="chip-row" id="seasonChips"></div>
+        <div class="chip-row emoji-filter-row" id="emojiFilterRow">
+          <span class="emoji-filter-label">Mes tags&nbsp;:</span>
+          <div class="emoji-filter-chips" id="emojiFilterChips"></div>
+        </div>
       `)}
       <div id="empty" class="notice" hidden>Aucune compilation pour l'instant. <a href="/upload">Crée la première</a>.</div>
       <div id="years"></div>
@@ -101,8 +105,6 @@ export async function mount(el, { query }) {
   const shuffleRow = el.querySelector('#shuffleRow');
   const buttons = [
     { id: 'sh-all', label: '🔀 Tout en aléatoire', show: comps.length > 0, fn: async () => playQueue(await queueAllSongs(), { sourceLabel: 'Tout en aléatoire' }) },
-    { id: 'sh-clean', label: 'Tout sauf les 😬', show: comps.length > 0, fn: async () => playQueue(await queueAllExceptDisliked(), { sourceLabel: 'Tout sauf les �' }) },
-    { id: 'sh-liked', label: '❤️ Mes coups de cœur', show: likeCount() > 0, fn: async () => playQueue(await queueLikedSongs(), { sourceLabel: 'Mes coups de cœur' }) },
     { id: 'sh-liked-comps', label: '❤️ Mes compilations aimées', show: likedCompCount() > 0, fn: async () => playQueue(await queueCompilations(likedCompilationIds()), { sourceLabel: 'Mes compilations aimées' }) },
   ];
   for (const b of buttons) {
@@ -147,11 +149,26 @@ export async function mount(el, { query }) {
   // Seed author selection from a legacy ?author= link, if present.
   const selectedAuthors = new Set(filterAuthor && authorEmails.includes(filterAuthor) ? [filterAuthor] : []);
   const selectedKeys = new Set();
+  // Emoji filter over the user's OWN tags: keep songs with ≥1 "want" emoji,
+  // drop any with a "don't want" emoji. Empty sets ⇒ no constraint.
+  const wantEmojis = new Set();
+  const dontWantEmojis = new Set();
+  const emojiFilterActive = () => wantEmojis.size > 0 || dontWantEmojis.size > 0;
+  const matchesEmojiFilter = (songId) => {
+    if (!emojiFilterActive()) return true;
+    const mine = getMyEmojis(songId);
+    for (const e of dontWantEmojis) if (mine.has(e)) return false;
+    if (wantEmojis.size === 0) return true;
+    for (const e of wantEmojis) if (mine.has(e)) return true;
+    return false;
+  };
 
   el.querySelector('#empty').hidden = comps.length > 0;
 
   const authorChipsEl = el.querySelector('#authorChips');
   const seasonChipsEl = el.querySelector('#seasonChips');
+  const emojiFilterRow = el.querySelector('#emojiFilterRow');
+  const emojiFilterChips = el.querySelector('#emojiFilterChips');
   const yearsEl = el.querySelector('#years');
 
   const filteredComps = () => comps.filter((c) =>
@@ -201,6 +218,75 @@ export async function mount(el, { query }) {
     })));
   }
 
+  // Emoji tag filter row. A chip per chosen emoji ("want" first, then a "−"
+  // separator and the "don't want" ones), plus an "+ Ajouter" button that opens
+  // the curated palette. Clicking a "want" chip demotes it to "don't want";
+  // clicking a "don't want" chip removes it. The palette lives as a sibling of
+  // the rebuilt chip area so re-renders don't tear it down.
+  let filterPalette = null;
+  const onFilterDocClick = (e) => {
+    if (!filterPalette) return;
+    if (filterPalette.contains(e.target) || e.target.closest('.rx-filter-add')) return;
+    closeFilterPalette();
+  };
+  function closeFilterPalette() {
+    if (filterPalette) { filterPalette.remove(); filterPalette = null; }
+    document.removeEventListener('click', onFilterDocClick, true);
+  }
+  function refreshFilterPalette() {
+    if (!filterPalette) return;
+    const applied = new Set([...wantEmojis, ...dontWantEmojis]);
+    filterPalette.querySelectorAll('.rx-opt').forEach((b) => {
+      b.classList.toggle('applied', applied.has(b.textContent));
+    });
+  }
+  function openFilterPalette() {
+    if (filterPalette) { closeFilterPalette(); return; }
+    filterPalette = renderPalette((emoji) => {
+      dontWantEmojis.delete(emoji);
+      if (wantEmojis.has(emoji)) wantEmojis.delete(emoji);
+      else wantEmojis.add(emoji);
+      apply();
+      refreshFilterPalette();
+    }, new Set([...wantEmojis, ...dontWantEmojis]));
+    emojiFilterRow.appendChild(filterPalette);
+    document.addEventListener('click', onFilterDocClick, true);
+  }
+
+  function mkEmojiChip(emoji, kind) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip emoji-chip' + (kind === 'dont' ? ' dont' : '');
+    chip.innerHTML = (kind === 'dont' ? '🚫 ' : '') + emoji;
+    chip.title = kind === 'want' ? 'Je veux — clic pour exclure' : 'Exclu — clic pour retirer';
+    chip.addEventListener('click', () => {
+      if (kind === 'want') { wantEmojis.delete(emoji); dontWantEmojis.add(emoji); }
+      else { dontWantEmojis.delete(emoji); }
+      apply();
+      refreshFilterPalette();
+    });
+    return chip;
+  }
+
+  function renderEmojiFilter() {
+    emojiFilterChips.innerHTML = '';
+    for (const e of wantEmojis) emojiFilterChips.appendChild(mkEmojiChip(e, 'want'));
+    if (dontWantEmojis.size) {
+      const sep = document.createElement('span');
+      sep.className = 'emoji-filter-sep';
+      sep.textContent = '−';
+      emojiFilterChips.appendChild(sep);
+      for (const e of dontWantEmojis) emojiFilterChips.appendChild(mkEmojiChip(e, 'dont'));
+    }
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'chip rx-filter-add';
+    add.textContent = emojiFilterActive() ? '＋' : '＋ Ajouter un filtre';
+    add.title = 'Ajouter un emoji au filtre';
+    add.addEventListener('click', (e) => { e.stopPropagation(); openFilterPalette(); });
+    emojiFilterChips.appendChild(add);
+  }
+
   // "Lire la sélection" — a shuffle button reflecting the live selection. Lives
   // in the always-visible shuffle row; hidden when nothing is filtered (the
   // "Tout en aléatoire" button already covers that case).
@@ -210,38 +296,64 @@ export async function mount(el, { query }) {
   selectionBtn.hidden = true;
   shuffleRow.insertBefore(selectionBtn, shuffleRow.firstChild);
   selectionBtn.addEventListener('click', async () => {
-    const matched = filteredComps();
-    if (matched.length === 0) return;
+    const compActive = selectedAuthors.size > 0 || selectedKeys.size > 0;
+    if (!compActive && !emojiFilterActive()) return;
     selectionBtn.disabled = true;
     try {
-      const queue = await queueCompilations(matched.map((c) => c.id));
-      playQueue(queue, { sourceLabel: selectionSourceLabel() });
+      let queue;
+      if (emojiFilterActive()) {
+        const compIds = compActive ? new Set(filteredComps().map((c) => c.id)) : null;
+        queue = await queueByMyEmojis(wantEmojis, dontWantEmojis, compIds);
+      } else {
+        const matched = filteredComps();
+        if (matched.length === 0) return;
+        queue = await queueCompilations(matched.map((c) => c.id));
+      }
+      if (queue.length) playQueue(queue, { sourceLabel: selectionSourceLabel() });
     } finally {
       selectionBtn.disabled = false;
     }
   });
 
   function selectionSourceLabel() {
-    const authorPart = selectedAuthors.size
-      ? [...selectedAuthors].map(displayNameFor).join(', ')
-      : 'Tous';
-    const seasonPart = selectedKeys.size
-      ? [...selectedKeys].map((k) => labelForKey.get(k) || k).join(', ')
-      : 'toutes saisons';
-    return `Sélection · ${authorPart} · ${seasonPart}`;
+    const parts = [
+      selectedAuthors.size ? [...selectedAuthors].map(displayNameFor).join(', ') : 'Tous',
+      selectedKeys.size ? [...selectedKeys].map((k) => labelForKey.get(k) || k).join(', ') : 'toutes saisons',
+    ];
+    if (emojiFilterActive()) {
+      const want = [...wantEmojis].join('');
+      const dont = [...dontWantEmojis].join('');
+      parts.push(`${want}${dont ? ` − ${dont}` : ''}`);
+    }
+    return `Sélection · ${parts.join(' · ')}`;
   }
 
   function renderSelectionShuffle() {
-    const active = selectedAuthors.size > 0 || selectedKeys.size > 0;
-    const n = active ? filteredComps().length : 0;
+    const compActive = selectedAuthors.size > 0 || selectedKeys.size > 0;
+    const active = compActive || emojiFilterActive();
     selectionBtn.hidden = !active;
-    selectionBtn.disabled = active && n === 0;
-    selectionBtn.innerHTML = `🔀 Lire la sélection${n ? ` · ${n} compil${n > 1 ? 's' : ''}` : ''}`;
+    if (!active) return;
+    let suffix = '';
+    if (compActive && !emojiFilterActive()) {
+      const n = filteredComps().length;
+      selectionBtn.disabled = n === 0;
+      suffix = n ? ` · ${n} compil${n > 1 ? 's' : ''}` : '';
+    } else {
+      selectionBtn.disabled = false;
+      // Exact count is cheap only when a "want" is set (every match is tagged);
+      // a "don't want"-only filter also keeps untagged songs, so skip the count.
+      if (wantEmojis.size > 0) {
+        const n = myEmojiSongIds().filter((id) => matchesEmojiFilter(id)).length;
+        suffix = ` · ${n} morceau${n > 1 ? 'x' : ''}`;
+      }
+    }
+    selectionBtn.innerHTML = `🔀 Lire la sélection${suffix}`;
   }
 
   function apply() {
     renderAuthorChips();
     renderSeasonChips();
+    renderEmojiFilter();
     renderSelectionShuffle();
     renderGroups();
     paintAvatars(el);

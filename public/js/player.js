@@ -16,12 +16,8 @@ import {
   ref as storageRef,
   getDownloadURL,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js';
-import {
-  getReaction,
-  onChange as onReactionChange,
-  toggleLike,
-  toggleDislike,
-} from './reactions.js';
+import { ensureCommunityReactionsLoaded } from './community-reactions.js';
+import { createReactionControl } from './reaction-control.js';
 import { coverUrl } from './image-url.js';
 import { navigate } from './router.js';
 
@@ -101,8 +97,7 @@ export function initPlayer() {
       <span class="time" id="pb-tot">0:00</span>
     </div>
     <div class="pb-right">
-      <button class="icon react" id="pb-like" title="J'aime" aria-label="J'aime">🤍</button>
-      <button class="icon react" id="pb-dislike" title="Je n'aime pas" aria-label="Je n'aime pas">😬</button>
+      <div class="rx-host" id="pb-react"></div>
       <button class="btn-ghost" id="pb-stop">Arrêter</button>
     </div>
   `;
@@ -119,15 +114,6 @@ export function initPlayer() {
     const t = queue[cursor];
     if (t?.compilationId) navigate(`/c/${t.compilationId}`);
   });
-  bar.querySelector('#pb-like').addEventListener('click', async () => {
-    const t = queue[cursor];
-    if (t?.songId) await toggleLike(t.songId);
-  });
-  bar.querySelector('#pb-dislike').addEventListener('click', async () => {
-    const t = queue[cursor];
-    if (t?.songId) await toggleDislike(t.songId);
-  });
-
   const scrub = bar.querySelector('#pb-scrub');
   scrub.addEventListener('input', () => {
     if (audio.duration) audio.currentTime = (scrub.value / 1000) * audio.duration;
@@ -154,22 +140,30 @@ export function initPlayer() {
     if (e.code === 'Space') { e.preventDefault(); audio.paused ? audio.play().catch(() => {}) : audio.pause(); }
   });
 
-  onReactionChange((songId) => {
-    if (queue[cursor]?.songId === songId) renderReactionButtons();
-  });
-
   setupMediaSession();
   restoreSession();
 }
 
-function renderReactionButtons() {
+// The bar shows one reaction control, rebuilt when the current track changes.
+let rxControl = null;
+let rxSongId = null;
+
+function renderReactionControl() {
+  const host = bar.querySelector('#pb-react');
+  if (!host) return;
   const t = queue[cursor];
-  const likeBtn = bar.querySelector('#pb-like');
-  const disBtn = bar.querySelector('#pb-dislike');
-  const r = t?.songId ? getReaction(t.songId) : null;
-  likeBtn.textContent = r === 'like' ? '❤️' : '🤍';
-  likeBtn.classList.toggle('active', r === 'like');
-  disBtn.classList.toggle('active', r === 'dislike');
+  if (!t?.songId) {
+    if (rxControl) { rxControl.unsub(); rxControl = null; rxSongId = null; }
+    host.innerHTML = '';
+    return;
+  }
+  if (rxControl && rxSongId === t.songId) { rxControl.refresh(); return; }
+  if (rxControl) rxControl.unsub();
+  host.innerHTML = '';
+  rxControl = createReactionControl(t.songId, { compact: true });
+  rxSongId = t.songId;
+  host.appendChild(rxControl.el);
+  ensureCommunityReactionsLoaded().then(() => { if (rxSongId === t.songId) rxControl?.refresh(); });
 }
 
 async function applyCover(track) {
@@ -212,7 +206,7 @@ export async function playAt(idx) {
   bar.querySelector('#pb-artist').textContent = t.artist || '';
   bar.querySelector('#pb-source').textContent = sourceLabel || t.compilationTitle || '';
   applyCover(t);
-  renderReactionButtons();
+  renderReactionControl();
   queue.forEach((q, i) => q.li?.classList.toggle('playing', i === cursor));
 
   let url;
@@ -289,7 +283,7 @@ async function restoreSession() {
   bar.querySelector('#pb-artist').textContent = saved.track.artist || '';
   bar.querySelector('#pb-source').textContent = sourceLabel || saved.track.compilationTitle || '';
   applyCover(saved.track);
-  renderReactionButtons();
+  renderReactionControl();
   try {
     const url = await resolveAudioUrl(saved.track.storagePath);
     audio.src = url;

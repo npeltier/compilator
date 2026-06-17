@@ -7,7 +7,7 @@ import {
   ensureSongsLoaded,
   trackFromSongId,
 } from './catalog.js';
-import { dislikedSongIds, likedSongIds } from './reactions.js';
+import { getMyEmojis } from './reactions.js';
 
 function shuffle(arr) {
   const a = arr.slice();
@@ -24,22 +24,31 @@ export async function queueAllSongs() {
   return shuffle(visibleSongs().map((s) => trackFromSongId(s.id)).filter(Boolean));
 }
 
-// "Sauf les 😬" — every song minus the user's disliked ones.
-export async function queueAllExceptDisliked() {
+// Filter by the user's OWN emoji tags: keep songs the user tagged with at least
+// one `want` emoji (no `want` constraint means "any"), and drop any song the user
+// tagged with a `dontWant` emoji. Optionally restrict to a set of compilations.
+// Powers the home emoji filter's "Lire la sélection".
+function matchesMyEmojis(songId, want, dontWant) {
+  if (!want?.size && !dontWant?.size) return true;
+  const mine = getMyEmojis(songId);
+  for (const e of dontWant || []) if (mine.has(e)) return false;
+  if (!want?.size) return true;
+  for (const e of want) if (mine.has(e)) return true;
+  return false;
+}
+
+export async function queueByMyEmojis(want, dontWant, compIds = null) {
   await ensureSongsLoaded();
-  const skip = new Set(dislikedSongIds());
+  const set = compIds && !(compIds instanceof Set) ? new Set(compIds) : compIds;
+  const songs = set && set.size
+    ? visibleSongs().filter((s) => set.has(s.compilationId))
+    : visibleSongs();
   return shuffle(
-    visibleSongs()
-      .filter((s) => !skip.has(s.id))
+    songs
+      .filter((s) => matchesMyEmojis(s.id, want, dontWant))
       .map((s) => trackFromSongId(s.id))
       .filter(Boolean),
   );
-}
-
-// "Mes coups de cœur" — only the user's liked songs.
-export async function queueLikedSongs() {
-  await ensureSongsLoaded();
-  return shuffle(likedSongIds().map((id) => trackFromSongId(id)).filter(Boolean));
 }
 
 // Per-section "shuffle this season+year". Songs are already attached to their

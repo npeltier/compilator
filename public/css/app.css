@@ -621,18 +621,51 @@ body.has-player { padding-bottom: 100px; }
 }
 
 /* -------- inline track reactions (compilation page, view mode) -------- */
-.tracklist:not(.edit) li { grid-template-columns: 32px 1fr auto auto !important; }
 .tracklist .tk-meta { min-width: 0; }
-.tracklist .tk-react { display: flex; gap: 4px; }
-.tracklist .tk-react button {
-  background: transparent;
-  font-size: 16px;
-  padding: 2px 6px;
-  filter: grayscale(0.5) opacity(0.5);
-  transition: filter 120ms ease, transform 80ms ease;
+
+/* -------- emoji reaction control (track rows + player bar) -------- */
+.rx { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.rx-strip { display: flex; flex-wrap: wrap; gap: 6px; }
+.rx-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: var(--bg-elev); border: 1px solid var(--line); border-radius: 999px;
+  padding: 2px 8px; font-size: 13px; line-height: 1.4; cursor: help;
 }
-.tracklist .tk-react button:hover { filter: none; transform: scale(1.15); background: transparent; }
-.tracklist .tk-react button.active { filter: none; }
+.rx-chip.mine { border-color: var(--accent); }
+.rx-chip .rx-count { font-size: 11px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+.rx-add {
+  background: transparent; border: 1px solid var(--line); border-radius: 999px;
+  width: 24px; height: 24px; padding: 0; line-height: 1; font-size: 16px;
+  color: var(--ink-dim); cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.rx-add:hover { color: var(--accent); border-color: var(--accent); background: transparent; }
+.rx-add[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+.rx-palette {
+  position: absolute; top: 100%; left: 0; z-index: 30; margin-top: 6px;
+  display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px;
+  background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.rx-opt {
+  background: transparent; border: 1px solid transparent; border-radius: 8px;
+  font-size: 20px; padding: 4px; line-height: 1; cursor: pointer;
+  transition: transform 80ms ease, background 100ms ease;
+}
+.rx-opt:hover { background: var(--bg-elev-2); transform: scale(1.1); }
+.rx-opt.applied { border-color: var(--accent); background: var(--bg-elev-2); }
+.rx-tooltip {
+  position: absolute; top: 100%; left: 0; z-index: 30; margin-top: 6px;
+  max-width: 240px; background: var(--bg-elev); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 6px 10px; font-size: 12px; color: var(--ink-dim);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+/* compact variant for the player bar — palette opens upward */
+.player-bar .rx { margin-top: 0; }
+.player-bar .rx-strip { max-width: 200px; overflow: hidden; flex-wrap: nowrap; }
+.player-bar .rx-palette,
+.player-bar .rx-tooltip { top: auto; bottom: 100%; margin: 0 0 6px 0; }
 
 /* -------- shuffle row (home) -------- */
 .shuffle-row {
@@ -885,6 +918,16 @@ body.has-player { padding-bottom: 100px; }
 }
 .chip .avatar { margin-left: -4px; }
 .chip:hover, .chip.active { color: var(--bg); background: var(--ink); border-color: var(--ink); }
+
+/* -------- emoji tag filter (home) -------- */
+.emoji-filter-row { position: relative; display: flex; align-items: center; gap: 10px; }
+.emoji-filter-label { font-size: 12px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.05em; }
+.emoji-filter-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.emoji-chip { font-size: 15px; line-height: 1; padding: 4px 10px; }
+.emoji-chip.dont { color: var(--ink-faint); border-style: dashed; }
+.emoji-chip.dont:hover { color: var(--bg); }
+.emoji-filter-sep { color: var(--ink-faint); font-size: 16px; padding: 0 2px; }
+.rx-filter-add { font-size: 12px; color: var(--ink-dim); }
 
 /* -------- responsive -------- */
 

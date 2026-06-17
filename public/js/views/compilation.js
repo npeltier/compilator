@@ -1,4 +1,5 @@
-// Compilation view: cover hero, ordered song list with ❤️/😬 buttons per row.
+// Compilation view: cover hero, ordered song list with an emoji reaction
+// control per row (community aggregate strip + a "+" picker).
 // Authors and admins also get an inline "✏ Modifier" mode that exposes
 // drag-to-reorder, title/artist editing, audio re-upload, and song deletion,
 // plus a "🗑 Supprimer la compilation" button.
@@ -16,12 +17,8 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
 import { coverUrl, invalidateCover } from '../image-url.js';
 import { playQueue } from '../player.js';
-import {
-  getReaction,
-  toggleLike,
-  toggleDislike,
-  onChange as onReactionChange,
-} from '../reactions.js';
+import { ensureCommunityReactionsLoaded } from '../community-reactions.js';
+import { createReactionControl } from '../reaction-control.js';
 import {
   isCompLiked,
   toggleCompLike,
@@ -125,6 +122,7 @@ export async function mount(el, { params }) {
 
   let mode = 'view';
   let editState = null;
+  let rxControls = [];
 
   function recomputeTotal() {
     return songs.reduce((a, t) => a + (t.duration || 0), 0);
@@ -152,6 +150,8 @@ export async function mount(el, { params }) {
   function renderView() {
     mode = 'view';
     editState = null;
+    rxControls.forEach((c) => c.unsub());
+    rxControls = [];
     const totalDur = recomputeTotal();
     main.innerHTML = `
       <div class="detail-hero">
@@ -185,31 +185,25 @@ export async function mount(el, { params }) {
           <div class="artist">${escape(t.artist)}</div>
           ${doubalonChipsHTML(t.doublons, id)}
         </div>
-        <div class="tk-react">
-          <button class="rx-like" title="J'aime" aria-label="J'aime">🤍</button>
-          <button class="rx-dis" title="Je n'aime pas" aria-label="Je n'aime pas">😬</button>
-        </div>
         <span class="dur">${fmt(t.duration)}</span>
       `;
       li.addEventListener('click', (e) => {
-        if (e.target.closest('.tk-react')) return;
+        if (e.target.closest('.rx')) return;
         if (e.target.closest('.tk-doublons')) return;
         playQueue(songs, { startIndex: i, sourceLabel: liveCompTitle });
       });
-      li.querySelector('.rx-like').addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleLike(t.songId);
-      });
-      li.querySelector('.rx-dis').addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleDislike(t.songId);
-      });
+      const rx = createReactionControl(t.songId, { compact: false });
+      li.querySelector('.tk-meta').appendChild(rx.el);
+      t.rxControl = rx;
+      rxControls.push(rx);
       tracksEl.appendChild(li);
       t.li = li;
-      renderRowReactions(t.songId);
     });
 
     paintDoublonCovers();
+
+    // Community emoji aggregate loads lazily; refresh the strips once it's in.
+    ensureCommunityReactionsLoaded().then(() => rxControls.forEach((c) => c.refresh()));
 
     main.querySelector('#playAll').addEventListener('click', () => {
       playQueue(songs, { startIndex: 0, sourceLabel: liveCompTitle });
@@ -225,20 +219,6 @@ export async function mount(el, { params }) {
     const liked = isCompLiked(id);
     btn.innerHTML = liked ? '❤️ Aimée' : '🤍 J\'aime';
     btn.classList.toggle('active', liked);
-  }
-
-  function renderRowReactions(songId) {
-    const tracksEl = main.querySelector('#tracks');
-    if (!tracksEl) return;
-    const li = tracksEl.querySelector(`li[data-song-id="${songId}"]`);
-    if (!li) return;
-    const r = getReaction(songId);
-    const like = li.querySelector('.rx-like');
-    const dis = li.querySelector('.rx-dis');
-    if (!like || !dis) return;
-    like.textContent = r === 'like' ? '❤️' : '🤍';
-    like.classList.toggle('active', r === 'like');
-    dis.classList.toggle('active', r === 'dislike');
   }
 
   function renderEdit() {
@@ -566,7 +546,6 @@ export async function mount(el, { params }) {
   }
 
   renderView();
-  const unsub = onReactionChange((songId) => renderRowReactions(songId));
   const unsubCompLike = onCompLikeChange((compId) => { if (compId === id) renderCompLike(); });
-  return () => { unsub(); unsubCompLike(); };
+  return () => { rxControls.forEach((c) => c.unsub()); unsubCompLike(); };
 }

@@ -19,9 +19,9 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js';
 import { coverUrl } from '../image-url.js';
 import {
-  likedSongIds,
+  songIdsWithMyEmoji,
   onChange as onReactionChange,
-  toggleLike,
+  toggleEmoji,
 } from '../reactions.js';
 import {
   likedCompilationIds,
@@ -240,7 +240,7 @@ export async function mount(el) {
 
   function renderLikes() {
     likesEl.innerHTML = '';
-    const ids = likedSongIds();
+    const ids = songIdsWithMyEmoji('❤️');
     countEl.textContent = ids.length ? `${ids.length} morceau${ids.length > 1 ? 'x' : ''}` : '';
     emptyEl.hidden = ids.length > 0;
     ids.forEach((songId, i) => {
@@ -260,7 +260,7 @@ export async function mount(el) {
         playQueue(queue, { startIndex: i, sourceLabel: 'Mes coups de cœur' });
       });
       li.querySelector('.lk-unlike').addEventListener('click', async () => {
-        await toggleLike(songId);
+        await toggleEmoji(songId, '❤️');
       });
       likesEl.appendChild(li);
     });

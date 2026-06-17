@@ -6,6 +6,7 @@ import { avatarHTML, paintAvatars } from './avatar.js';
 import { displayNameFor, setViewer } from './catalog.js';
 import { ensureSongsLoaded, loadAllowlist, loadCatalog } from './catalog.js';
 import { loadReactions } from './reactions.js';
+import { ensureCommunityReactionsLoaded } from './community-reactions.js';
 import { loadLikedCompilations } from './liked-compilations.js';
 import { initPlayer } from './player.js';
 import { initSearch } from './search.js';
@@ -64,6 +65,7 @@ if (topbar) {
 initPlayer();
 initSearch();
 ensureSongsLoaded(); // warm in background; not awaited — shuffle buttons await it on click
+ensureCommunityReactionsLoaded(); // warm aggregate reactions in background too
 
 register('/', () => import('./views/home.js'));
 register('/c/:id', () => import('./views/compilation.js'));

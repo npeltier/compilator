@@ -1,10 +1,14 @@
-// Per-user song reactions (❤️ like / 😬 dislike).
+// Per-user emoji reactions on songs.
 //
-// Data model: /users/{emailLower}/reactions/{songId} { value: 'like'|'dislike', at }
+// Data model: /users/{emailLower}/reactions/{songId} { emojis: string[], at }
 //
-// One read on shell boot (small per-user subcollection); writes happen as the
-// user clicks the heart/poop buttons. Listeners are notified after each change
-// so the player and any open track list can re-render their icons in sync.
+// A user can apply several emojis to a single song (a set, not mutually
+// exclusive). One read on shell boot (small per-user subcollection); writes
+// happen as the user toggles emojis in the picker. Listeners are notified after
+// each change so the player and any open track list re-render in sync.
+//
+// Legacy docs shaped { value: 'like'|'dislike' } are read transparently and
+// normalized (like → ❤️, dislike → 👎), so no data migration is needed.
 
 import { db } from './firebase-init.js';
 import {
@@ -15,8 +19,25 @@ import {
   serverTimestamp,
   setDoc,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
+import { applyLocalChange } from './community-reactions.js';
 
-const cache = new Map();
+// Curated palette of widely cross-platform-supported emojis. Rendering is
+// identical on desktop, iOS and Android. Display order matches this array.
+export const EMOJIS = [
+  '❤️', '😍', '😂', '🔥', '🎉', '👍', '👎', '😬',
+  '🥹', '😭', '🤯', '🕺', '💃', '🎸', '🥁', '🎷',
+  '🤘', '✨', '🫶', '🙌', '🍺', '🍸', '🥱', '❄️',
+];
+
+// Normalize a reaction doc to an emoji array, tolerating the legacy shape.
+export function emojisFromDoc(data) {
+  if (Array.isArray(data?.emojis)) return data.emojis;
+  if (data?.value === 'like') return ['❤️'];
+  if (data?.value === 'dislike') return ['👎'];
+  return [];
+}
+
+const cache = new Map(); // songId → Set<emoji> (current user's own)
 const listeners = new Set();
 let userKey = null;
 
@@ -24,47 +45,47 @@ export async function loadReactions(email) {
   userKey = (email || '').toLowerCase();
   cache.clear();
   const snap = await getDocs(collection(db, 'users', userKey, 'reactions'));
-  snap.forEach((d) => cache.set(d.id, d.data().value));
+  snap.forEach((d) => {
+    const emojis = emojisFromDoc(d.data());
+    if (emojis.length) cache.set(d.id, new Set(emojis));
+  });
 }
 
-export function getReaction(songId) { return cache.get(songId) || null; }
-export function isLiked(songId) { return cache.get(songId) === 'like'; }
-export function isDisliked(songId) { return cache.get(songId) === 'dislike'; }
-
-export function likedSongIds() {
-  return [...cache.entries()].filter(([, v]) => v === 'like').map(([id]) => id);
+export function getMyEmojis(songId) {
+  return new Set(cache.get(songId) || []);
 }
-export function dislikedSongIds() {
-  return [...cache.entries()].filter(([, v]) => v === 'dislike').map(([id]) => id);
+export function hasMyEmoji(songId, emoji) {
+  return cache.get(songId)?.has(emoji) || false;
 }
-export function likeCount() { return likedSongIds().length; }
-export function dislikeCount() { return dislikedSongIds().length; }
+export function myEmojiSongIds() {
+  return [...cache.keys()];
+}
+export function songIdsWithMyEmoji(emoji) {
+  return [...cache.entries()].filter(([, set]) => set.has(emoji)).map(([id]) => id);
+}
 
-// Toggle: clicking the same value clears, otherwise sets it. Mutually exclusive
-// between like and dislike. Pass `null` to clear explicitly.
-export async function setReaction(songId, value) {
+// Toggle one emoji for a song: add it if absent, remove it if present. The doc
+// is deleted once the user has no emojis left on the song.
+export async function toggleEmoji(songId, emoji) {
   if (!userKey) throw new Error('reactions not loaded');
-  const ref = doc(db, 'users', userKey, 'reactions', songId);
-  if (value == null) {
-    cache.delete(songId);
-    emit(songId);
-    try { await deleteDoc(ref); } catch (err) { console.error('clear reaction', err); }
-    return;
-  }
-  cache.set(songId, value);
+  const set = new Set(cache.get(songId) || []);
+  const added = !set.has(emoji);
+  if (added) set.add(emoji);
+  else set.delete(emoji);
+
+  if (set.size) cache.set(songId, set);
+  else cache.delete(songId);
+
+  applyLocalChange(songId, emoji, userKey, added);
   emit(songId);
+
+  const ref = doc(db, 'users', userKey, 'reactions', songId);
   try {
-    await setDoc(ref, { value, at: serverTimestamp() });
+    if (set.size) await setDoc(ref, { emojis: [...set], at: serverTimestamp() });
+    else await deleteDoc(ref);
   } catch (err) {
     console.error('save reaction', err);
   }
-}
-
-export async function toggleLike(songId) {
-  await setReaction(songId, isLiked(songId) ? null : 'like');
-}
-export async function toggleDislike(songId) {
-  await setReaction(songId, isDisliked(songId) ? null : 'dislike');
 }
 
 export function onChange(fn) {
