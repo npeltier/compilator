@@ -19,7 +19,8 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js';
 import { coverUrl } from '../image-url.js';
 import {
-  songIdsWithMyEmoji,
+  myEmojiSongIds,
+  getMyEmojis,
   onChange as onReactionChange,
   toggleEmoji,
 } from '../reactions.js';
@@ -126,9 +127,9 @@ export async function mount(el) {
       </section>
 
       <section class="section" style="margin-top:64px;">
-        <h3>Mes coups de cœur <span id="likesCount" class="eyebrow" style="float:right"></span></h3>
-        <ul id="likes" class="likes-list"></ul>
-        <div id="likesEmpty" class="notice" hidden>Aucun ❤️ pour l'instant. Mets ton premier ❤️ depuis n'importe quelle compilation.</div>
+        <h3>Mes réactions <span id="likesCount" class="eyebrow" style="float:right"></span></h3>
+        <ul id="likes" class="likes-list scroll"></ul>
+        <div id="likesEmpty" class="notice" hidden>Aucune réaction pour l'instant. Réagis à un morceau depuis n'importe quelle compilation.</div>
       </section>
 
       <section class="section" style="margin-top:64px;">
@@ -240,12 +241,13 @@ export async function mount(el) {
 
   function renderLikes() {
     likesEl.innerHTML = '';
-    const ids = songIdsWithMyEmoji('❤️');
+    // Every song the user has reacted to, with any emoji (not just ❤️).
+    const ids = myEmojiSongIds().filter((id) => trackFromSongId(id));
     countEl.textContent = ids.length ? `${ids.length} morceau${ids.length > 1 ? 'x' : ''}` : '';
     emptyEl.hidden = ids.length > 0;
     ids.forEach((songId, i) => {
       const t = trackFromSongId(songId);
-      if (!t) return;
+      const emojis = [...getMyEmojis(songId)];
       const li = document.createElement('li');
       li.innerHTML = `
         <button class="lk-play" title="Jouer à partir d'ici">▶</button>
@@ -253,14 +255,16 @@ export async function mount(el) {
           <div class="title">${escape(t.title)}</div>
           <div class="artist">${escape(t.artist)} ${t.compilationId ? `· <a href="/c/${t.compilationId}">${escape(t.compilationTitle)}</a>` : ''}</div>
         </div>
-        <button class="lk-unlike" title="Retirer le ❤️" aria-label="Retirer">❤️</button>
+        <div class="lk-emojis">
+          ${emojis.map((e) => `<button class="lk-emo" data-emoji="${escape(e)}" title="Retirer ${escape(e)}" aria-label="Retirer ${escape(e)}">${e}</button>`).join('')}
+        </div>
       `;
       li.querySelector('.lk-play').addEventListener('click', () => {
         const queue = ids.map((sid) => trackFromSongId(sid)).filter(Boolean);
-        playQueue(queue, { startIndex: i, sourceLabel: 'Mes coups de cœur' });
+        playQueue(queue, { startIndex: i, sourceLabel: 'Mes réactions' });
       });
-      li.querySelector('.lk-unlike').addEventListener('click', async () => {
-        await toggleEmoji(songId, '❤️');
+      li.querySelectorAll('.lk-emo').forEach((b) => {
+        b.addEventListener('click', () => toggleEmoji(songId, b.dataset.emoji));
       });
       likesEl.appendChild(li);
     });

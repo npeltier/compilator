@@ -25,7 +25,7 @@ import { applyLocalChange } from './community-reactions.js';
 // identical on desktop, iOS and Android. Display order matches this array.
 export const EMOJIS = [
   '❤️', '😍', '😂', '🔥', '🎉', '👍', '👎', '😬',
-  '🥹', '😭', '🤯', '🕺', '💃', '🎸', '🥁', '🎷',
+  '🥹', '🍅', '🌼', '🕺', '💃', '🎸', '🥁', '🎷',
   '🤘', '✨', '🫶', '🙌', '🍺', '🍸', '🥱', '❄️',
 ];
 
