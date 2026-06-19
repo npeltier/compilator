@@ -23,7 +23,7 @@ import {
   updateDoc,
   writeBatch,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
-import { parseBlob } from 'https://cdn.jsdelivr.net/npm/music-metadata-browser@2.5.10/+esm';
+import { parseBlob } from 'https://cdn.jsdelivr.net/npm/music-metadata@11/+esm';
 
 function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
