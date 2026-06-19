@@ -405,7 +405,8 @@ h3 { font-size: 24px; letter-spacing: 0.04em; }
 .cover-card .art {
   aspect-ratio: 1;
   background: var(--bg-elev);
-  background-size: cover;
+  background-size: contain;
+  background-repeat: no-repeat;
   background-position: center;
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
@@ -459,7 +460,7 @@ h3 { font-size: 24px; letter-spacing: 0.04em; }
   aspect-ratio: 1;
   width: 100%;
   border-radius: var(--radius-lg);
-  background: var(--bg-elev) center/cover no-repeat;
+  background: var(--bg-elev) center/contain no-repeat;
   box-shadow: var(--shadow);
 }
 .detail-hero .meta { display: flex; flex-direction: column; justify-content: flex-end; }
