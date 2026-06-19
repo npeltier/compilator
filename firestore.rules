@@ -81,6 +81,13 @@ service cloud.firestore {
         allow read: if isAllowlisted();
         allow write: if isSignedIn() && callerEmail() == email;
       }
+
+      // Per-user saved filter presets: { name, inc, exc, at }. Private to the
+      // owner — they only drive the owner's own home-view shuffle buttons.
+      match /savedFilters/{filterId} {
+        allow read: if isSignedIn() && callerEmail() == email;
+        allow write: if isSignedIn() && callerEmail() == email;
+      }
     }
 
     // Compilations: allowlisted users read; the owning user (author == email)

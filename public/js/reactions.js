@@ -21,12 +21,26 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
 import { applyLocalChange } from './community-reactions.js';
 
-// Curated palette of widely cross-platform-supported emojis. Rendering is
-// identical on desktop, iOS and Android. Display order matches this array.
+// Curated palette of widely cross-platform-supported emojis (rendering is
+// identical on desktop, iOS and Android), grouped by type. The picker renders
+// them in this order, wrapping at 8 per row.
 export const EMOJIS = [
-  '❤️', '😍', '😂', '🔥', '🎉', '👍', '👎', '😬',
-  '🥹', '🍅', '🌼', '🕺', '💃', '🎸', '🥁', '🎷',
-  '🤘', '✨', '🫶', '🙌', '🍺', '🍸', '🥱', '❄️',
+  // Love
+  '❤️', '🫶',
+  // Faces
+  '😍', '😂', '🥹', '😎', '😈', '😬', '🥱',
+  // Hands & gestures
+  '👍', '👎', '🤘', '🙌', '🤌', '🫷',
+  // Dance
+  '🕺', '💃',
+  // Music
+  '🎸', '🥁', '🎷',
+  // Party & sparks
+  '🔥', '🎉', '✨', '🧨', '❄️',
+  // Drinks
+  '🍺', '🍸',
+  // Nature & misc
+  '🍅', '🌼', '🦄', '🧅', '🏳️‍🌈',
 ];
 
 // Normalize a reaction doc to an emoji array, tolerating the legacy shape.

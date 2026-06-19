@@ -705,32 +705,6 @@ body.has-player { padding-bottom: 100px; }
 }
 .season-block header .season-shuffle:hover { color: var(--accent); border-color: var(--accent); background: transparent; }
 
-/* -------- saved filter presets (home shuffle row) -------- */
-/* display:contents so each preset wrapper is itself a flex item of .shuffle-row. */
-.saved-filters { display: contents; }
-.saved-filter { position: relative; display: inline-flex; }
-.save-btn { font-size: 16px; }
-.saved-filter .sf-del {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  line-height: 1;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--bg-elev-2);
-  color: var(--ink-dim);
-  font-size: 13px;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease;
-}
-.saved-filter:hover .sf-del,
-.saved-filter:focus-within .sf-del { opacity: 1; }
-.saved-filter .sf-del:hover { color: var(--accent); border-color: var(--accent); }
-
 /* -------- profile likes list -------- */
 .likes-list {
   list-style: none;
@@ -960,9 +934,6 @@ body.has-player { padding-bottom: 100px; }
 }
 .chip .avatar { margin-left: -4px; }
 .chip:hover, .chip.active { color: var(--bg); background: var(--ink); border-color: var(--ink); }
-/* Excluded (tri-state) chip: dashed outline with a 🚫 prefix. */
-.chip.exc { color: var(--ink-faint); border-style: dashed; }
-.chip.exc:hover { color: var(--bg); background: var(--ink-faint); border-color: var(--ink-faint); }
 
 /* -------- emoji tag filter (home) -------- */
 .emoji-filter-row { position: relative; display: flex; align-items: center; gap: 10px; }

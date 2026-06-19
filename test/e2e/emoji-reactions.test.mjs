@@ -7,8 +7,8 @@
 // deletion-when-empty, legacy {value:'like'} back-compat, the COMMUNITY
 // aggregate (counts across users + .mine marker + hover attribution), player-bar
 // reactions with live row↔bar sync, the removed preset shuffle buttons, and the
-// emoji filter (want chip, count, want→don't-want cycling, deterministic
-// playback), plus the profile "Mes coups de cœur" list.
+// emoji filter (＋ inclure / ＋ exclure buttons, count, include + exclude lists,
+// deterministic playback), plus the profile "Mes coups de cœur" list.
 //
 // Prerequisites: emulator suite running (npm run dev) + allowlisted login user.
 
@@ -213,21 +213,22 @@ async function run() {
     assert.equal(await page.$('#sh-liked'), null, '"Mes coups de cœur" button still present');
     assert.ok(await page.$('#sh-all'), '"Tout en aléatoire" button missing');
     await page.click('#filterToggle');
+    // Two add buttons now: "＋ inclure" and "＋ exclure". Open the include one.
     await page.waitForSelector('#emojiFilterChips .rx-filter-add', { timeout: 5000 });
-    await page.click('#emojiFilterChips .rx-filter-add');
+    const clickAdd = (kind) => page.evaluate((k) => {
+      const b = [...document.querySelectorAll('#emojiFilterChips .rx-filter-add')].find((x) => x.textContent.includes(k));
+      b?.click();
+    }, kind);
+    await clickAdd('inclure');
     await page.waitForSelector('#emojiFilterRow .rx-palette', { timeout: 5000 });
     await pick('#emojiFilterRow', '❤️');
     await page.waitForFunction(() => /· 2 morceaux/.test(document.querySelector('#sh-selection')?.textContent || ''), null, { timeout: 5000 });
-    ok(`want ❤️ → "${(await page.$eval('#sh-selection', (e) => e.textContent)).trim()}"`);
+    ok(`include ❤️ → "${(await page.$eval('#sh-selection', (e) => e.textContent)).trim()}"`);
 
-    step('cycle ❤️… no — add 🔥 to want then demote it to don’t-want → count drops to 1');
-    await pick('#emojiFilterRow', '🔥'); // adds 🔥 to want
-    // demote the 🔥 want-chip to don't-want by clicking it
-    await page.waitForFunction(() => [...document.querySelectorAll('#emojiFilterChips .emoji-chip')].some((c) => c.textContent.includes('🔥')), null, { timeout: 5000 });
-    await page.evaluate(() => {
-      const c = [...document.querySelectorAll('#emojiFilterChips .emoji-chip')].find((x) => x.textContent.includes('🔥') && !x.classList.contains('dont'));
-      c?.click();
-    });
+    step('add 🔥 to the EXCLUDE list (＋ exclure) → "❤️ − 🔥", count drops to 1');
+    await clickAdd('exclure');
+    await page.waitForSelector('#emojiFilterRow .rx-palette', { timeout: 5000 });
+    await pick('#emojiFilterRow', '🔥'); // adds 🔥 to the exclude list
     await page.waitForFunction(() => {
       const hasSep = !!document.querySelector('#emojiFilterChips .emoji-filter-sep');
       const hasDont = !!document.querySelector('#emojiFilterChips .emoji-chip.dont');

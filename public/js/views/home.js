@@ -7,6 +7,12 @@ import { visibleCompilations, displayNameFor } from '../catalog.js';
 import { getMyEmojis, myEmojiSongIds } from '../reactions.js';
 import { likedCompCount, likedCompilationIds } from '../liked-compilations.js';
 import {
+  savedFilters,
+  saveFilter,
+  deleteSavedFilter,
+  onChange as onSavedChange,
+} from '../saved-filters.js';
+import {
   queueAllSongs,
   queueSeasonYear,
   queueCompilations,
@@ -44,6 +50,7 @@ export async function mount(el, { query }) {
       ${filterBarHTML(`
         <div class="chip-row" id="authorChips"></div>
         <div class="chip-row" id="seasonChips"></div>
+        <div class="chip-row" id="yearChips"></div>
         <div class="chip-row emoji-filter-row" id="emojiFilterRow">
           <span class="emoji-filter-label">Mes tags&nbsp;:</span>
           <div class="emoji-filter-chips" id="emojiFilterChips"></div>
@@ -117,49 +124,51 @@ export async function mount(el, { query }) {
     shuffleRow.appendChild(btn);
   }
 
-  // ---- Multi-select filters (authors × season/year) ----
-  // Both chip rows toggle independently; an empty set means "no constraint".
-  // The grid shows compilations matching (selected authors) AND (selected
-  // season/years), and the "Lire la sélection" button plays a shuffled mix of
-  // exactly that set.
-  const seasonLabel = { ete: 'Été', noel: 'Noël' };
-  const seasonOrder = { ete: 0, noel: 1 };
+  // Saved-filter shuffle buttons (one per preset), rendered after the static
+  // buttons and kept in sync as presets are added/removed.
+  const savedFiltersEl = document.createElement('span');
+  savedFiltersEl.className = 'saved-filters';
+  shuffleRow.appendChild(savedFiltersEl);
+
+  // ---- Unified include / exclude filter (authors × seasons × years × emojis) ----
+  // Every dimension carries an `inc` set and an `exc` set; a chip cycles
+  // neutral → include → exclude → neutral. The grid and the "Lire la sélection"
+  // button show compilations/songs matching every include constraint (OR within
+  // a dimension, AND across dimensions) and none of the exclude ones.
+  const seasonLabel = { ete: 'Été', noel: 'Noël', other: 'Autre' };
+  const seasonOrder = { ete: 0, noel: 1, other: 9 };
   const yearOf = (c) => c.year || new Date(c.createdAt?.toMillis?.() || Date.now()).getFullYear();
-  const keyOf = (c) => `${c.season || 'other'}-${yearOf(c)}`;
+  const seasonOf = (c) => c.season || 'other';
 
   const authorEmails = Array.from(new Set(comps.map((c) => c.author).filter(Boolean)))
     .sort((a, b) => displayNameFor(a).localeCompare(displayNameFor(b), 'fr'));
+  const seasonsPresent = Array.from(new Set(comps.map(seasonOf)))
+    .sort((a, b) => (seasonOrder[a] ?? 9) - (seasonOrder[b] ?? 9));
+  const yearsPresent = Array.from(new Set(comps.map(yearOf))).sort((a, b) => b - a);
 
-  // Season/year buckets span all compilations (not just the author-filtered
-  // subset) so the chips stay put as you toggle authors. Each carries a label.
-  const buckets = [];
-  const seenKeys = new Set();
-  for (const c of comps) {
-    const key = keyOf(c);
-    if (seenKeys.has(key)) continue;
-    seenKeys.add(key);
-    buckets.push({ key, season: c.season || 'other', year: yearOf(c) });
-  }
-  buckets.sort((a, b) => {
-    if (a.year !== b.year) return (b.year || 0) - (a.year || 0);
-    return (seasonOrder[a.season] ?? 9) - (seasonOrder[b.season] ?? 9);
-  });
-  const labelForKey = new Map(buckets.map((b) => [b.key, `${seasonLabel[b.season] || b.season} ${b.year}`]));
+  const inc = { authors: new Set(), seasons: new Set(), years: new Set(), emojis: new Set() };
+  const exc = { authors: new Set(), seasons: new Set(), years: new Set(), emojis: new Set() };
+  // Seed the author include from a legacy ?author= link, if present.
+  if (filterAuthor && authorEmails.includes(filterAuthor)) inc.authors.add(filterAuthor);
 
-  // Seed author selection from a legacy ?author= link, if present.
-  const selectedAuthors = new Set(filterAuthor && authorEmails.includes(filterAuthor) ? [filterAuthor] : []);
-  const selectedKeys = new Set();
-  // Emoji filter over the user's OWN tags: keep songs with ≥1 "want" emoji,
-  // drop any with a "don't want" emoji. Empty sets ⇒ no constraint.
-  const wantEmojis = new Set();
-  const dontWantEmojis = new Set();
-  const emojiFilterActive = () => wantEmojis.size > 0 || dontWantEmojis.size > 0;
+  // Tri-state cycle: neutral → include → exclude → neutral.
+  const cycle = (dim, value) => {
+    if (inc[dim].has(value)) { inc[dim].delete(value); exc[dim].add(value); }
+    else if (exc[dim].has(value)) { exc[dim].delete(value); }
+    else { inc[dim].add(value); }
+    apply();
+  };
+  const clearDim = (dim) => { inc[dim].clear(); exc[dim].clear(); apply(); };
+  const stateOf = (dim, value) => (inc[dim].has(value) ? 'inc' : exc[dim].has(value) ? 'exc' : null);
+  const dimEmpty = (dim) => inc[dim].size === 0 && exc[dim].size === 0;
+
+  const emojiFilterActive = () => inc.emojis.size > 0 || exc.emojis.size > 0;
   const matchesEmojiFilter = (songId) => {
     if (!emojiFilterActive()) return true;
     const mine = getMyEmojis(songId);
-    for (const e of dontWantEmojis) if (mine.has(e)) return false;
-    if (wantEmojis.size === 0) return true;
-    for (const e of wantEmojis) if (mine.has(e)) return true;
+    for (const e of exc.emojis) if (mine.has(e)) return false;
+    if (inc.emojis.size === 0) return true;
+    for (const e of inc.emojis) if (mine.has(e)) return true;
     return false;
   };
 
@@ -167,25 +176,32 @@ export async function mount(el, { query }) {
 
   const authorChipsEl = el.querySelector('#authorChips');
   const seasonChipsEl = el.querySelector('#seasonChips');
+  const yearChipsEl = el.querySelector('#yearChips');
   const emojiFilterRow = el.querySelector('#emojiFilterRow');
   const emojiFilterChips = el.querySelector('#emojiFilterChips');
   const yearsEl = el.querySelector('#years');
 
-  const filteredComps = () => comps.filter((c) =>
-    (selectedAuthors.size === 0 || selectedAuthors.has(c.author))
-    && (selectedKeys.size === 0 || selectedKeys.has(keyOf(c))));
+  const filteredComps = () => comps.filter((c) => {
+    const a = c.author, s = seasonOf(c), y = yearOf(c);
+    if (exc.authors.has(a) || exc.seasons.has(s) || exc.years.has(y)) return false;
+    if (inc.authors.size && !inc.authors.has(a)) return false;
+    if (inc.seasons.size && !inc.seasons.has(s)) return false;
+    if (inc.years.size && !inc.years.has(y)) return false;
+    return true;
+  });
 
-  const toggle = (set, value) => { set.has(value) ? set.delete(value) : set.add(value); };
-
-  const mkChip = ({ label, active, avatarEmail = null, onClick }) => {
+  // Tri-state chip: include renders filled (.active), exclude renders dashed
+  // with a 🚫 prefix (.exc), neutral is plain. Clicking advances the cycle.
+  const mkChip = ({ label, state, avatarEmail = null, onClick }) => {
     const a = document.createElement('a');
-    a.className = 'chip' + (active ? ' active' : '');
+    a.className = 'chip' + (state === 'inc' ? ' active' : state === 'exc' ? ' exc' : '');
     a.href = '#';
     a.setAttribute('role', 'button');
-    a.setAttribute('aria-pressed', String(active));
-    a.innerHTML = avatarEmail
+    a.setAttribute('aria-pressed', String(state === 'inc'));
+    const inner = avatarEmail
       ? `${avatarHTML(avatarEmail, { size: 'xs' })}<span>${escape(label)}</span>`
-      : escape(label);
+      : `<span>${escape(label)}</span>`;
+    a.innerHTML = (state === 'exc' ? '🚫 ' : '') + inner;
     a.addEventListener('click', (e) => { e.preventDefault(); onClick(); });
     return a;
   };
@@ -193,28 +209,42 @@ export async function mount(el, { query }) {
   function renderAuthorChips() {
     authorChipsEl.innerHTML = '';
     authorChipsEl.appendChild(mkChip({
-      label: 'Tout', active: selectedAuthors.size === 0,
-      onClick: () => { selectedAuthors.clear(); apply(); },
+      label: 'Tout', state: dimEmpty('authors') ? 'inc' : null,
+      onClick: () => clearDim('authors'),
     }));
     authorEmails.forEach((email) => authorChipsEl.appendChild(mkChip({
       label: displayNameFor(email),
-      active: selectedAuthors.has(email),
+      state: stateOf('authors', email),
       avatarEmail: email,
-      onClick: () => { toggle(selectedAuthors, email); apply(); },
+      onClick: () => cycle('authors', email),
     })));
   }
 
   function renderSeasonChips() {
     seasonChipsEl.innerHTML = '';
-    if (buckets.length < 2) return; // single bucket: nothing to filter
+    if (seasonsPresent.length < 2) return; // nothing to filter
     seasonChipsEl.appendChild(mkChip({
-      label: 'Tout', active: selectedKeys.size === 0,
-      onClick: () => { selectedKeys.clear(); apply(); },
+      label: 'Tout', state: dimEmpty('seasons') ? 'inc' : null,
+      onClick: () => clearDim('seasons'),
     }));
-    buckets.forEach((b) => seasonChipsEl.appendChild(mkChip({
-      label: labelForKey.get(b.key),
-      active: selectedKeys.has(b.key),
-      onClick: () => { toggle(selectedKeys, b.key); apply(); },
+    seasonsPresent.forEach((s) => seasonChipsEl.appendChild(mkChip({
+      label: seasonLabel[s] || s,
+      state: stateOf('seasons', s),
+      onClick: () => cycle('seasons', s),
+    })));
+  }
+
+  function renderYearChips() {
+    yearChipsEl.innerHTML = '';
+    if (yearsPresent.length < 2) return; // nothing to filter
+    yearChipsEl.appendChild(mkChip({
+      label: 'Tout', state: dimEmpty('years') ? 'inc' : null,
+      onClick: () => clearDim('years'),
+    }));
+    yearsPresent.forEach((y) => yearChipsEl.appendChild(mkChip({
+      label: String(y),
+      state: stateOf('years', y),
+      onClick: () => cycle('years', y),
     })));
   }
 
@@ -235,20 +265,27 @@ export async function mount(el, { query }) {
   }
   function refreshFilterPalette() {
     if (!filterPalette) return;
-    const applied = new Set([...wantEmojis, ...dontWantEmojis]);
+    const applied = new Set([...inc.emojis, ...exc.emojis]);
     filterPalette.querySelectorAll('.rx-opt').forEach((b) => {
       b.classList.toggle('applied', applied.has(b.textContent));
     });
   }
-  function openFilterPalette() {
-    if (filterPalette) { closeFilterPalette(); return; }
+  // Open the curated palette, adding picks to either the include or exclude
+  // list. Re-opening with the same target toggles it closed.
+  let paletteTarget = null;
+  function openFilterPalette(target) {
+    if (filterPalette && paletteTarget === target) { closeFilterPalette(); return; }
+    if (filterPalette) closeFilterPalette();
+    paletteTarget = target;
+    const into = target === 'exc' ? exc.emojis : inc.emojis;
+    const other = target === 'exc' ? inc.emojis : exc.emojis;
     filterPalette = renderPalette((emoji) => {
-      dontWantEmojis.delete(emoji);
-      if (wantEmojis.has(emoji)) wantEmojis.delete(emoji);
-      else wantEmojis.add(emoji);
+      other.delete(emoji);
+      if (into.has(emoji)) into.delete(emoji);
+      else into.add(emoji);
       apply();
       refreshFilterPalette();
-    }, new Set([...wantEmojis, ...dontWantEmojis]));
+    }, new Set([...inc.emojis, ...exc.emojis]));
     emojiFilterRow.appendChild(filterPalette);
     document.addEventListener('click', onFilterDocClick, true);
   }
@@ -256,35 +293,90 @@ export async function mount(el, { query }) {
   function mkEmojiChip(emoji, kind) {
     const chip = document.createElement('button');
     chip.type = 'button';
-    chip.className = 'chip emoji-chip' + (kind === 'dont' ? ' dont' : '');
-    chip.innerHTML = (kind === 'dont' ? '🚫 ' : '') + emoji;
-    chip.title = kind === 'want' ? 'Je veux — clic pour exclure' : 'Exclu — clic pour retirer';
+    chip.className = 'chip emoji-chip' + (kind === 'exc' ? ' dont' : '');
+    chip.innerHTML = (kind === 'exc' ? '🚫 ' : '') + emoji;
+    chip.title = kind === 'inc' ? 'Inclus — clic pour retirer' : 'Exclu — clic pour retirer';
     chip.addEventListener('click', () => {
-      if (kind === 'want') { wantEmojis.delete(emoji); dontWantEmojis.add(emoji); }
-      else { dontWantEmojis.delete(emoji); }
+      (kind === 'exc' ? exc.emojis : inc.emojis).delete(emoji);
       apply();
       refreshFilterPalette();
     });
     return chip;
   }
 
+  function mkAddButton(label, target) {
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'chip rx-filter-add';
+    add.textContent = label;
+    add.title = target === 'exc' ? 'Ajouter un emoji à exclure' : 'Ajouter un emoji à inclure';
+    add.addEventListener('click', (e) => { e.stopPropagation(); openFilterPalette(target); });
+    return add;
+  }
+
   function renderEmojiFilter() {
     emojiFilterChips.innerHTML = '';
-    for (const e of wantEmojis) emojiFilterChips.appendChild(mkEmojiChip(e, 'want'));
-    if (dontWantEmojis.size) {
+    for (const e of inc.emojis) emojiFilterChips.appendChild(mkEmojiChip(e, 'inc'));
+    if (exc.emojis.size) {
       const sep = document.createElement('span');
       sep.className = 'emoji-filter-sep';
       sep.textContent = '−';
       emojiFilterChips.appendChild(sep);
-      for (const e of dontWantEmojis) emojiFilterChips.appendChild(mkEmojiChip(e, 'dont'));
+      for (const e of exc.emojis) emojiFilterChips.appendChild(mkEmojiChip(e, 'exc'));
     }
-    const add = document.createElement('button');
-    add.type = 'button';
-    add.className = 'chip rx-filter-add';
-    add.textContent = emojiFilterActive() ? '＋' : '＋ Ajouter un filtre';
-    add.title = 'Ajouter un emoji au filtre';
-    add.addEventListener('click', (e) => { e.stopPropagation(); openFilterPalette(); });
-    emojiFilterChips.appendChild(add);
+    emojiFilterChips.appendChild(mkAddButton('＋ inclure', 'inc'));
+    emojiFilterChips.appendChild(mkAddButton('＋ exclure', 'exc'));
+  }
+
+  const dimActive = (d) => inc[d].size > 0 || exc[d].size > 0;
+  const compFilterActive = () => dimActive('authors') || dimActive('seasons') || dimActive('years');
+  const filterActive = () => compFilterActive() || emojiFilterActive();
+
+  // Canonical "+ list − − list" label, reused for the player source line and
+  // saved-filter auto-names, e.g. "Nicolas P. ❤️🕺 − 👎😬".
+  function filterLabel() {
+    const side = (bag) => {
+      const parts = [
+        ...[...bag.authors].map(displayNameFor),
+        ...[...bag.seasons].map((s) => seasonLabel[s] || s),
+        ...[...bag.years].map(String),
+      ];
+      const emojis = [...bag.emojis].join('');
+      if (emojis) parts.push(emojis);
+      return parts.join(' ');
+    };
+    const inStr = side(inc);
+    const outStr = side(exc);
+    return outStr ? `${inStr || 'Tout'} − ${outStr}` : (inStr || 'Tout');
+  }
+
+  const bagToArrays = (bag) => ({
+    authors: [...bag.authors],
+    seasons: [...bag.seasons],
+    years: [...bag.years].map(String),
+    emojis: [...bag.emojis],
+  });
+
+  // Order-independent signature of a { authors, seasons, years, emojis } shape,
+  // used to tell whether the live selection equals an already-saved preset.
+  const sideSig = (side) => ['authors', 'seasons', 'years', 'emojis']
+    .map((d) => [...(side[d] || [])].map(String).sort().join(','))
+    .join('|');
+  const liveSig = () => `${sideSig(bagToArrays(inc))}#${sideSig(bagToArrays(exc))}`;
+  // True when the live selection exactly matches one of the saved presets, in
+  // which case it's already playable/saved via its own chip — no need for the
+  // "Lire la sélection" / 💾 buttons.
+  const matchesSavedFilter = () => {
+    const cur = liveSig();
+    return savedFilters().some((f) => `${sideSig(f.inc)}#${sideSig(f.exc)}` === cur);
+  };
+
+  // Resolve the live filter to a shuffled queue. Author/season/year narrow the
+  // compilation set; emoji include/exclude narrow songs within it.
+  async function buildQueueFor() {
+    const compIds = compFilterActive() ? new Set(filteredComps().map((c) => c.id)) : null;
+    if (emojiFilterActive()) return queueByMyEmojis(inc.emojis, exc.emojis, compIds);
+    return queueCompilations([...(compIds || [])]);
   }
 
   // "Lire la sélection" — a shuffle button reflecting the live selection. Lives
@@ -296,53 +388,49 @@ export async function mount(el, { query }) {
   selectionBtn.hidden = true;
   shuffleRow.insertBefore(selectionBtn, shuffleRow.firstChild);
   selectionBtn.addEventListener('click', async () => {
-    const compActive = selectedAuthors.size > 0 || selectedKeys.size > 0;
-    if (!compActive && !emojiFilterActive()) return;
+    if (!filterActive()) return;
     selectionBtn.disabled = true;
     try {
-      let queue;
-      if (emojiFilterActive()) {
-        const compIds = compActive ? new Set(filteredComps().map((c) => c.id)) : null;
-        queue = await queueByMyEmojis(wantEmojis, dontWantEmojis, compIds);
-      } else {
-        const matched = filteredComps();
-        if (matched.length === 0) return;
-        queue = await queueCompilations(matched.map((c) => c.id));
-      }
-      if (queue.length) playQueue(queue, { sourceLabel: selectionSourceLabel() });
+      const queue = await buildQueueFor();
+      if (queue.length) playQueue(queue, { sourceLabel: filterLabel() });
     } finally {
       selectionBtn.disabled = false;
     }
   });
 
-  function selectionSourceLabel() {
-    const parts = [
-      selectedAuthors.size ? [...selectedAuthors].map(displayNameFor).join(', ') : 'Tous',
-      selectedKeys.size ? [...selectedKeys].map((k) => labelForKey.get(k) || k).join(', ') : 'toutes saisons',
-    ];
-    if (emojiFilterActive()) {
-      const want = [...wantEmojis].join('');
-      const dont = [...dontWantEmojis].join('');
-      parts.push(`${want}${dont ? ` − ${dont}` : ''}`);
+  // "💾" — save the live filter as a preset, auto-named from the filter itself.
+  const saveBtn = document.createElement('button');
+  saveBtn.id = 'sh-save';
+  saveBtn.className = 'shuffle-btn save-btn';
+  saveBtn.innerHTML = '💾';
+  saveBtn.title = 'Enregistrer ce filtre';
+  saveBtn.hidden = true;
+  shuffleRow.insertBefore(saveBtn, selectionBtn.nextSibling);
+  saveBtn.addEventListener('click', async () => {
+    if (!filterActive()) return;
+    saveBtn.disabled = true;
+    try {
+      await saveFilter({ name: filterLabel(), inc: bagToArrays(inc), exc: bagToArrays(exc) });
+    } finally {
+      saveBtn.disabled = false;
     }
-    return `Sélection · ${parts.join(' · ')}`;
-  }
+  });
 
   function renderSelectionShuffle() {
-    const compActive = selectedAuthors.size > 0 || selectedKeys.size > 0;
-    const active = compActive || emojiFilterActive();
+    const active = filterActive() && !matchesSavedFilter();
     selectionBtn.hidden = !active;
+    saveBtn.hidden = !active;
     if (!active) return;
     let suffix = '';
-    if (compActive && !emojiFilterActive()) {
+    if (compFilterActive() && !emojiFilterActive()) {
       const n = filteredComps().length;
       selectionBtn.disabled = n === 0;
       suffix = n ? ` · ${n} compil${n > 1 ? 's' : ''}` : '';
     } else {
       selectionBtn.disabled = false;
-      // Exact count is cheap only when a "want" is set (every match is tagged);
-      // a "don't want"-only filter also keeps untagged songs, so skip the count.
-      if (wantEmojis.size > 0) {
+      // Exact count is cheap only when an include emoji is set (every match is
+      // tagged); an exclude-only filter also keeps untagged songs, so skip it.
+      if (inc.emojis.size > 0) {
         const n = myEmojiSongIds().filter((id) => matchesEmojiFilter(id)).length;
         suffix = ` · ${n} morceau${n > 1 ? 'x' : ''}`;
       }
@@ -350,9 +438,56 @@ export async function mount(el, { query }) {
     selectionBtn.innerHTML = `🔀 Lire la sélection${suffix}`;
   }
 
+  // Rehydrate a saved preset's arrays into the live inc/exc Sets (years back to
+  // numbers) and refresh the UI.
+  function applySavedFilter(f) {
+    for (const dim of ['authors', 'seasons', 'years', 'emojis']) { inc[dim].clear(); exc[dim].clear(); }
+    const load = (bag, src) => {
+      for (const a of src?.authors || []) bag.authors.add(a);
+      for (const s of src?.seasons || []) bag.seasons.add(s);
+      for (const y of src?.years || []) bag.years.add(Number(y));
+      for (const e of src?.emojis || []) bag.emojis.add(e);
+    };
+    load(inc, f.inc); load(exc, f.exc);
+    apply();
+  }
+
+  function renderSavedFilters() {
+    savedFiltersEl.innerHTML = '';
+    for (const f of savedFilters()) {
+      const wrap = document.createElement('span');
+      wrap.className = 'saved-filter';
+      const play = document.createElement('button');
+      play.type = 'button';
+      play.className = 'shuffle-btn sf-play';
+      play.innerHTML = `🔀 ${escape(f.name || 'Filtre')}`;
+      play.title = 'Jouer ce filtre';
+      play.addEventListener('click', async () => {
+        play.disabled = true;
+        try {
+          applySavedFilter(f);
+          const queue = await buildQueueFor();
+          if (queue.length) playQueue(queue, { sourceLabel: f.name || filterLabel() });
+        } finally {
+          play.disabled = false;
+        }
+      });
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'sf-del';
+      del.innerHTML = '×';
+      del.title = 'Supprimer ce filtre';
+      del.addEventListener('click', (e) => { e.stopPropagation(); deleteSavedFilter(f.id); });
+      wrap.appendChild(play);
+      wrap.appendChild(del);
+      savedFiltersEl.appendChild(wrap);
+    }
+  }
+
   function apply() {
     renderAuthorChips();
     renderSeasonChips();
+    renderYearChips();
     renderEmojiFilter();
     renderSelectionShuffle();
     renderGroups();
@@ -379,7 +514,7 @@ export async function mount(el, { query }) {
       const winter = groups.filter((c) => c.season === 'noel');
       const summer = groups.filter((c) => c.season === 'ete');
       const other = groups.filter((c) => c.season !== 'ete' && c.season !== 'noel');
-      for (const [seasonKey, list] of [['noel', winter], ['ete', summer], ['other', other]]) {
+      for (const [seasonKey, list] of [['ete', summer], ['noel', winter], ['other', other]]) {
         if (list.length === 0) continue;
         const block = document.createElement('section');
         block.className = `season-block ${seasonKey === 'noel' ? 'winter' : seasonKey === 'ete' ? 'summer' : ''}`;
@@ -425,8 +560,7 @@ export async function mount(el, { query }) {
           // than navigating to their profile), so you can build up a selection.
           card.querySelector('.cover-card-author').addEventListener('click', (e) => {
             e.preventDefault();
-            toggle(selectedAuthors, c.author);
-            apply();
+            cycle('authors', c.author);
           });
           grid.appendChild(card);
           if (c.coverPath) {
@@ -441,5 +575,11 @@ export async function mount(el, { query }) {
   }
 
   apply();
+  renderSavedFilters();
   wireFilterBar(el);
+
+  // Keep the saved-filter buttons in sync as presets are added/removed, and
+  // tear the subscription (and any open palette) down when the view unmounts.
+  const offSaved = onSavedChange(() => { renderSavedFilters(); renderSelectionShuffle(); });
+  return () => { offSaved(); closeFilterPalette(); };
 }

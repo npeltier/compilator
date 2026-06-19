@@ -1,17 +1,19 @@
-// Browser end-to-end test for the home view's multi-select filters.
+// Browser end-to-end test for the home view's unified include/exclude filters.
 //
 // Unlike upload-flow.test.mjs (which drives Firestore/Storage directly via the
-// SDK), this test drives the REAL client code — public/js/views/home.js and
-// shuffle.js — in a headless browser, because those modules import the Firebase
-// SDK from a CDN URL and only run in a browser.
+// SDK), this test drives the REAL client code — public/js/views/home.js,
+// shuffle.js and saved-filters.js — in a headless browser, because those
+// modules import the Firebase SDK from a CDN URL and only run in a browser.
 //
-// It seeds an isolated dataset (two synthetic authors × two season/years, each
-// with songs) via the Admin SDK, then in Chromium:
+// It seeds an isolated dataset (two synthetic authors across seasons/years,
+// each with songs) via the Admin SDK, then in Chromium:
 //   1. logs in and opens the collapsed "Filtres" bar,
-//   2. toggles multiple author + season chips at once,
-//   3. asserts the compilation grid shows the (authors × seasons) intersection,
-//   4. asserts the "Lire la sélection" button appears with the right count,
-//   5. clicks it and asserts the player starts on the selected mix.
+//   2. include-toggles authors and the now-decoupled season + year chips,
+//   3. asserts the grid is the intersection and renders summer before winter,
+//   4. exercises the tri-state cycle (include → exclude → neutral),
+//   5. plays "Lire la sélection" and checks the "+ − −" source label,
+//   6. saves the filter, asserts it persists to Firestore and plays from the
+//      top shuffle row, then deletes it.
 //
 // Author scoping keeps assertions deterministic even if other compilations
 // exist locally: once we constrain to our two synthetic authors, only their
@@ -33,9 +35,11 @@ const PASSWORD = 'password';
 // Synthetic authors — emails that won't collide with real/seed data.
 const ALPHA = 'ftest-alpha@example.com';
 const BETA = 'ftest-beta@example.com';
+// Same-year summer+winter (2025) lets us assert summer-before-winter ordering;
+// the 2024 winter lets us assert the year chip filters independently of season.
 const COMPS = [
   { id: 'ftestAlphaEte25', title: 'FTEST Alpha Été 2025', author: ALPHA, season: 'ete', year: 2025 },
-  { id: 'ftestAlphaNoel24', title: 'FTEST Alpha Noël 2024', author: ALPHA, season: 'noel', year: 2024 },
+  { id: 'ftestAlphaNoel25', title: 'FTEST Alpha Noël 2025', author: ALPHA, season: 'noel', year: 2025 },
   { id: 'ftestBetaEte25', title: 'FTEST Beta Été 2025', author: BETA, season: 'ete', year: 2025 },
   { id: 'ftestBetaNoel24', title: 'FTEST Beta Noël 2024', author: BETA, season: 'noel', year: 2024 },
 ];
@@ -58,6 +62,9 @@ async function removeSeed() {
   }
   await db.doc(`users/${ALPHA}`).delete().catch(() => {});
   await db.doc(`users/${BETA}`).delete().catch(() => {});
+  // Saved filters live under the login user's doc, not the synthetic authors'.
+  const sf = await db.collection(`users/${EMAIL}/savedFilters`).get();
+  await Promise.all(sf.docs.map((d) => d.ref.delete()));
 }
 
 async function writeSeed() {
@@ -79,8 +86,8 @@ async function writeSeed() {
 }
 
 // ---- in-page helpers (run inside the browser) ----
-// A chip's visible label is the text of its non-avatar span, or its whole text
-// for chips without an avatar ("Tout", season chips).
+// A chip's visible label is the text of its non-avatar span (every chip now
+// wraps its label in a <span>; excluded chips also carry a leading "🚫 ").
 const PAGE_HELPERS = `
   window.__chipLabel = (c) => {
     const s = c.querySelector('span:not(.avatar)');
@@ -97,7 +104,7 @@ const PAGE_HELPERS = `
 `;
 
 async function run() {
-  step('seed isolated dataset (2 authors × 2 season/years, 2 songs each)');
+  step('seed isolated dataset (2 authors across seasons/years, 2 songs each)');
   await removeSeed();
   await writeSeed();
   ok(`seeded ${COMPS.length} compilations for Alpha & Beta`);
@@ -109,7 +116,8 @@ async function run() {
 
   const labels = (sel) => page.evaluate((s) => window.__labels(s), sel);
   const gridTitles = () => page.$$eval('#years .cover-card .title', (els) => els.map((e) => e.textContent.trim()));
-  const ftestTitles = async () => (await gridTitles()).filter((t) => t.startsWith('FTEST')).sort();
+  const ftestOrdered = async () => (await gridTitles()).filter((t) => t.startsWith('FTEST'));
+  const ftestTitles = async () => (await ftestOrdered()).sort();
   const clickChip = async (container, label) => {
     const hit = await page.evaluate(([c, l]) => window.__clickChip(c, l), [container, label]);
     assert.ok(hit, `chip "${label}" not found in ${container}`);
@@ -135,47 +143,74 @@ async function run() {
     await page.click('#filterToggle');
     await page.waitForTimeout(200);
     assert.equal(await page.$eval('#filterBar', (b) => b.classList.contains('collapsed')), false, 'bar should expand on toggle');
-    ok('filter bar expanded');
-    assert.deepEqual(await selBtn().then((b) => b.hidden), true, 'selection button hidden with no filter');
-    ok('selection button hidden initially');
+    assert.equal(await selBtn().then((b) => b.hidden), true, 'selection button hidden with no filter');
+    ok('filter bar expanded; selection button hidden initially');
 
-    step('multi-select TWO authors at once (Alpha + Beta)');
+    step('season and year are now SEPARATE chip rows');
+    // Other (real/seed) compilations may exist locally, so assert our chips are
+    // PRESENT rather than asserting the full set.
+    const seasonChips = (await labels('#seasonChips .chip')).filter((l) => l !== 'Tout');
+    const yearChips = (await labels('#yearChips .chip')).filter((l) => l !== 'Tout');
+    for (const s of ['Été', 'Noël']) assert.ok(seasonChips.includes(s), `season chip "${s}" missing, got ${JSON.stringify(seasonChips)}`);
+    for (const y of ['2024', '2025']) assert.ok(yearChips.includes(y), `year chip "${y}" missing, got ${JSON.stringify(yearChips)}`);
+    ok(`season chips include Été/Noël; year chips include 2024/2025`);
+
+    step('include TWO authors at once (Alpha + Beta)');
     await clickChip('#authorChips', 'Alpha');
     await clickChip('#authorChips', 'Beta');
     const activeAuthors = (await labels('#authorChips .chip.active')).sort();
-    assert.deepEqual(activeAuthors, ['Alpha', 'Beta'], `expected both authors active, got ${JSON.stringify(activeAuthors)}`);
-    ok(`two authors active simultaneously: ${activeAuthors.join(', ')}`);
+    assert.deepEqual(activeAuthors, ['Alpha', 'Beta'], `expected both authors included, got ${JSON.stringify(activeAuthors)}`);
+    ok(`two authors included simultaneously: ${activeAuthors.join(', ')}`);
 
-    step('add ONE season (Été 2025) → grid is the (authors × season) intersection');
-    await clickChip('#seasonChips', 'Été 2025');
+    step('include season "Été" (decoupled from year) → only summer comps');
+    await clickChip('#seasonChips', 'Été');
     let grid = await ftestTitles();
     assert.deepEqual(grid, ['FTEST Alpha Été 2025', 'FTEST Beta Été 2025'],
-      `expected only the two Été comps, got ${JSON.stringify(grid)}`);
+      `expected only the two summer comps, got ${JSON.stringify(grid)}`);
     let btn = await selBtn();
     assert.equal(btn.hidden, false, 'selection button should be visible');
-    assert.match(btn.text, /2 compils/, `expected "2 compils" in button, got "${btn.text}"`);
-    ok(`grid = 2 Été comps; button = "${btn.text}"`);
+    assert.match(btn.text, /2 compils/, `expected "2 compils", got "${btn.text}"`);
+    ok(`grid = 2 summer comps; button = "${btn.text}"`);
 
-    step('multi-select a SECOND season (Noël 2024) → 2 authors × 2 seasons = 4');
-    await clickChip('#seasonChips', 'Noël 2024');
-    const activeSeasons = (await labels('#seasonChips .chip.active')).sort();
-    assert.deepEqual(activeSeasons, ['Noël 2024', 'Été 2025'].sort(), `expected both seasons active, got ${JSON.stringify(activeSeasons)}`);
+    step('also include "Noël" → all four comps (both seasons)');
+    await clickChip('#seasonChips', 'Noël');
     grid = await ftestTitles();
     assert.deepEqual(grid, COMPS.map((c) => c.title).sort(), `expected all 4 comps, got ${JSON.stringify(grid)}`);
-    btn = await selBtn();
-    assert.match(btn.text, /4 compils/, `expected "4 compils", got "${btn.text}"`);
-    ok(`two seasons active; grid = 4 comps; button = "${btn.text}"`);
+    assert.match((await selBtn()).text, /4 compils/, 'expected "4 compils"');
+    ok('two seasons included; grid = 4 comps');
 
-    step('deselect one author (Beta) → grid narrows to Alpha across both seasons');
-    await clickChip('#authorChips', 'Beta');
+    step('reset seasons + authors, then include YEAR 2025 alone → year filters independently');
+    await clickChip('#seasonChips', 'Tout');
+    await clickChip('#authorChips', 'Tout');
+    await clickChip('#yearChips', '2025');
     grid = await ftestTitles();
-    assert.deepEqual(grid, ['FTEST Alpha Noël 2024', 'FTEST Alpha Été 2025'].sort(),
-      `expected Alpha's two comps, got ${JSON.stringify(grid)}`);
-    assert.match((await selBtn()).text, /2 compils/, 'button should drop back to 2');
-    ok('selection updates live as chips toggle off');
+    assert.deepEqual(grid, ['FTEST Alpha Noël 2025', 'FTEST Alpha Été 2025', 'FTEST Beta Été 2025'].sort(),
+      `expected the three 2025 comps, got ${JSON.stringify(grid)}`);
+    ok('year chip filters across seasons/authors on its own');
 
-    step('"Lire la sélection" starts playback of the selected mix');
-    await clickChip('#authorChips', 'Beta'); // back to 4 comps for a richer mix
+    step('summer renders before winter within the same year');
+    const ordered = await ftestOrdered();
+    const lastEte = ordered.map((t) => /Été/.test(t)).lastIndexOf(true);
+    const firstNoel = ordered.findIndex((t) => /Noël/.test(t));
+    assert.ok(lastEte >= 0 && firstNoel >= 0 && lastEte < firstNoel,
+      `summer should precede winter in DOM order, got ${JSON.stringify(ordered)}`);
+    ok(`grid order: ${ordered.join(' | ')}`);
+
+    step('tri-state: include Alpha, then EXCLUDE Beta (click twice)');
+    await clickChip('#yearChips', 'Tout');
+    await clickChip('#authorChips', 'Alpha');     // include
+    await clickChip('#authorChips', 'Beta');      // → include
+    await clickChip('#authorChips', 'Beta');      // → exclude
+    const excAuthors = await labels('#authorChips .chip.exc');
+    const incAuthors = await labels('#authorChips .chip.active');
+    assert.deepEqual(excAuthors, ['Beta'], `expected Beta excluded, got ${JSON.stringify(excAuthors)}`);
+    assert.ok(incAuthors.includes('Alpha'), `expected Alpha included, got ${JSON.stringify(incAuthors)}`);
+    grid = await ftestTitles();
+    assert.deepEqual(grid, ['FTEST Alpha Noël 2025', 'FTEST Alpha Été 2025'].sort(),
+      `include-Alpha + exclude-Beta should yield Alpha's two comps, got ${JSON.stringify(grid)}`);
+    ok('exclude drops Beta; include keeps Alpha');
+
+    step('"Lire la sélection" plays the mix with a "+ − −" source label');
     await page.click('#sh-selection');
     await page.waitForTimeout(600);
     const player = await page.evaluate(() => ({
@@ -186,17 +221,50 @@ async function run() {
     }));
     assert.equal(player.hasPlayer, true, 'body should have has-player class');
     assert.equal(player.barVisible, true, 'player bar should be visible');
-    assert.match(player.title || '', /^FTEST .* – piste \d$/, `now-playing should be a seeded song, got "${player.title}"`);
-    assert.match(player.source || '', /^Sélection ·/, `source label should describe the selection, got "${player.source}"`);
+    assert.match(player.title || '', /^FTEST Alpha .* – piste \d$/, `now-playing should be an Alpha song, got "${player.title}"`);
+    assert.ok((player.source || '').includes('Alpha') && (player.source || '').includes('Beta') && (player.source || '').includes('−'),
+      `source label should read "Alpha − Beta", got "${player.source}"`);
     ok(`playing "${player.title}" — source "${player.source}"`);
 
-    step('reset with the "Tout" chips → selection button hides again');
+    step('save the filter → persists to Firestore and appears in the shuffle row');
+    await page.click('#sh-save');
+    await page.waitForSelector('.saved-filter .sf-play', { timeout: 5000 });
+    const sfLabel = await page.$eval('.saved-filter .sf-play', (b) => b.textContent.trim());
+    assert.ok(sfLabel.includes('Alpha') && sfLabel.includes('Beta'), `saved button label, got "${sfLabel}"`);
+    // The UI button appears from the in-memory cache before the async setDoc
+    // commits, so poll the emulator until the write lands.
+    let savedDocs;
+    for (let i = 0; i < 20; i++) {
+      savedDocs = await db.collection(`users/${EMAIL}/savedFilters`).get();
+      if (savedDocs.size >= 1) break;
+      await page.waitForTimeout(150);
+    }
+    assert.equal(savedDocs.size, 1, `expected 1 saved filter in Firestore, got ${savedDocs.size}`);
+    const saved = savedDocs.docs[0].data();
+    assert.deepEqual(saved.inc.authors, [ALPHA], `saved inc.authors, got ${JSON.stringify(saved.inc?.authors)}`);
+    assert.deepEqual(saved.exc.authors, [BETA], `saved exc.authors, got ${JSON.stringify(saved.exc?.authors)}`);
+    ok(`saved filter persisted: "${sfLabel}"`);
+
+    step('reset filters, then play the saved filter from the shuffle row');
     await clickChip('#authorChips', 'Tout');
-    await clickChip('#seasonChips', 'Tout');
     assert.equal((await selBtn()).hidden, true, 'selection button hidden after reset');
-    const all = new Set(await gridTitles());
-    for (const c of COMPS) assert.ok(all.has(c.title), `expected ${c.title} visible after reset`);
-    ok('reset clears the selection and shows all compilations');
+    await page.click('.saved-filter .sf-play');
+    await page.waitForTimeout(600);
+    const replay = await page.evaluate(() => document.querySelector('#pb-source')?.textContent?.trim());
+    assert.ok((replay || '').includes('Alpha'), `saved filter playback source, got "${replay}"`);
+    ok(`saved filter replays — source "${replay}"`);
+
+    step('delete the saved filter → button disappears and Firestore doc is gone');
+    await page.click('.saved-filter .sf-del');
+    await page.waitForFunction(() => !document.querySelector('.saved-filter'), { timeout: 5000 });
+    let afterDelete;
+    for (let i = 0; i < 20; i++) {
+      afterDelete = await db.collection(`users/${EMAIL}/savedFilters`).get();
+      if (afterDelete.size === 0) break;
+      await page.waitForTimeout(150);
+    }
+    assert.equal(afterDelete.size, 0, `expected 0 saved filters after delete, got ${afterDelete.size}`);
+    ok('saved filter deleted from UI and Firestore');
 
     assert.deepEqual(pageErrors, [], `unexpected page errors: ${JSON.stringify(pageErrors)}`);
   } finally {

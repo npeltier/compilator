@@ -8,6 +8,7 @@ import { ensureSongsLoaded, loadAllowlist, loadCatalog } from './catalog.js';
 import { loadReactions } from './reactions.js';
 import { ensureCommunityReactionsLoaded } from './community-reactions.js';
 import { loadLikedCompilations } from './liked-compilations.js';
+import { loadSavedFilters } from './saved-filters.js';
 import { initPlayer } from './player.js';
 import { initSearch } from './search.js';
 import { register, start } from './router.js';
@@ -30,6 +31,7 @@ await Promise.all([
   loadCatalog(),
   loadReactions(user.email),
   loadLikedCompilations(user.email),
+  loadSavedFilters(user.email),
   // Allowlist is admin-readable only; non-admins skip the fetch (rules would
   // reject it anyway). Used to populate "assign author" dropdowns with users
   // who haven't signed in yet.
