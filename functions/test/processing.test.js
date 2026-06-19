@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals';
+import { writeFileSync } from 'fs';
 
 // Mock firebase-admin: `admin.firestore` is both callable (returns a client with
 // .doc(...)) and a namespace (has FieldValue static). The callable form is used
@@ -103,11 +104,39 @@ jest.unstable_mockModule('music-metadata', () => ({
   })),
 }));
 
+// Mock fluent-ffmpeg: the real code now writes to a seekable temp file and reads
+// it back, so `.save(path)` must produce a file and signal completion. We write
+// a tiny placeholder (parseBuffer is mocked, so its contents don't matter) and
+// fire the 'end' handler.
+jest.unstable_mockModule('fluent-ffmpeg', () => {
+  const ffmpegFn = jest.fn(() => {
+    const handlers = {};
+    const cmd = {
+      noVideo: () => cmd,
+      format: () => cmd,
+      audioCodec: () => cmd,
+      audioQuality: () => cmd,
+      on: (ev, cb) => { handlers[ev] = cb; return cmd; },
+      save: (path) => {
+        writeFileSync(path, 'ffmpeg-out');
+        if (handlers.end) handlers.end();
+        return cmd;
+      },
+    };
+    return cmd;
+  });
+  ffmpegFn.setFfmpegPath = jest.fn();
+  return { default: ffmpegFn };
+});
+
+jest.unstable_mockModule('@ffmpeg-installer/ffmpeg', () => ({ default: { path: '/usr/bin/ffmpeg' } }));
+
 const {
   processSongFromStaging,
   replaceSongFromStaging,
   deleteCompilationFully,
   recomputeDurationsFromStore,
+  DURATION_FIX_VERSION,
 } = await import('../processing.js');
 
 describe('processSongFromStaging', () => {
@@ -303,36 +332,57 @@ describe('recomputeDurationsFromStore', () => {
     jest.clearAllMocks();
   });
 
-  test('re-probes only unverified songs, fixes bad durations, refreshes total', async () => {
+  test('re-mux + re-probe only stale songs, repair bad durations, refresh total', async () => {
     // parseBuffer mock (module-level) returns duration 180 for any binary.
     const songDocs = [
-      // Bad duration, never verified → should be re-probed and corrected to 180.
+      // Bad duration, no current pipeline version → re-muxed, corrected to 180,
+      // and its repaired file written back to /store/.
       { id: 's1', ref: { id: 's1' }, data: () => ({ duration: 3319, storagePath: 'store/ab/h1.mp3' }) },
-      // Already verified → skipped, its 180 is carried into the total untouched.
-      { id: 's2', ref: { id: 's2' }, data: () => ({ duration: 180, durationVerified: true, storagePath: 'store/cd/h2.mp3' }) },
+      // Already at the current version → skipped; its 180 carries into the total.
+      { id: 's2', ref: { id: 's2' }, data: () => ({ duration: 180, durationFixV: DURATION_FIX_VERSION, storagePath: 'store/cd/h2.mp3' }) },
     ];
     compRef.collection.mockReturnValue({ get: jest.fn(async () => ({ size: 2, docs: songDocs })) });
 
     const res = await recomputeDurationsFromStore({ compilationId: 'comp1' });
 
-    expect(res.checked).toBe(1);                 // only the unverified song re-probed
+    expect(res.checked).toBe(1);                 // only the stale song processed
     expect(res.fixed).toBe(1);                   // 3319 → 180 counts as a fix
     expect(res.totalDuration).toBe(360);         // 180 (fixed) + 180 (skipped)
     expect(res.durations).toEqual({ s1: 180, s2: 180 });
 
-    // The fixed song is written with the verified flag; the verified one is not touched.
+    // The fixed song is stamped with the current pipeline version.
     expect(bulkWriterMock.set).toHaveBeenCalledTimes(1);
     const [ref, patch] = bulkWriterMock.set.mock.calls[0];
     expect(ref.id).toBe('s1');
     expect(patch.duration).toBe(180);
-    expect(patch.durationVerified).toBe(true);
+    expect(patch.durationFixV).toBe(DURATION_FIX_VERSION);
+
+    // The stale song was downloaded and its repaired binary written back.
     expect(storeFileMock.download).toHaveBeenCalledTimes(1);
+    expect(storeFileMock.save).toHaveBeenCalledTimes(1);
 
     // Corrected total is persisted on the compilation.
     expect(compRef.set).toHaveBeenCalledWith(
       expect.objectContaining({ totalDuration: 360 }),
       { merge: true },
     );
+  });
+
+  test('does not rewrite the stored file when the duration was already correct', async () => {
+    // Stored duration matches what re-measuring yields (180) → no file rewrite,
+    // but still stamped to the current version so it won't be re-checked.
+    const songDocs = [
+      { id: 's3', ref: { id: 's3' }, data: () => ({ duration: 180, storagePath: 'store/ef/h3.mp3' }) },
+    ];
+    compRef.collection.mockReturnValue({ get: jest.fn(async () => ({ size: 1, docs: songDocs })) });
+
+    const res = await recomputeDurationsFromStore({ compilationId: 'comp1' });
+
+    expect(res.checked).toBe(1);
+    expect(res.fixed).toBe(0);
+    expect(storeFileMock.save).not.toHaveBeenCalled();   // no needless re-upload
+    expect(bulkWriterMock.set).toHaveBeenCalledTimes(1);
+    expect(bulkWriterMock.set.mock.calls[0][1].durationFixV).toBe(DURATION_FIX_VERSION);
   });
 
   test('throws on missing compilationId', async () => {

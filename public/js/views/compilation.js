@@ -32,7 +32,7 @@ import {
   removeCompilationLocal,
 } from '../catalog.js';
 import { isAdminSync } from '../auth-guard.js';
-import { deleteCompilation, replaceSongBinary, uploadCover } from '../upload-pipeline.js';
+import { deleteCompilation, replaceSongBinary, uploadCover, recomputeDurations } from '../upload-pipeline.js';
 import { navigate } from '../router.js';
 import { avatarHTML, paintAvatars } from '../avatar.js';
 
@@ -562,6 +562,17 @@ export async function mount(el, { params }) {
 
       await batch.commit();
 
+      // Repair any stored durations an older transcode got wrong (the server
+      // re-muxes the binaries and returns corrected per-song durations). Use
+      // those when re-rendering. Non-fatal: a failure just leaves the originals.
+      let fixedDurations = null;
+      try {
+        const res = await recomputeDurations(id);
+        fixedDurations = res?.durations || null;
+      } catch (e) {
+        console.warn('recomputeDurations failed (non-fatal):', e);
+      }
+
       // Apply changes locally so we can stay on the page without a reload.
       if (trimmedTitle && trimmedTitle !== comp.title) {
         comp.title = trimmedTitle;
@@ -577,7 +588,7 @@ export async function mount(el, { params }) {
           order: i,
           title: r.title || 'Sans titre',
           artist: r.artist || '',
-          duration: r.duration,
+          duration: fixedDurations?.[r.songId] ?? r.duration,
         };
       });
 

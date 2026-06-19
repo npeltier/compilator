@@ -114,7 +114,7 @@ export const replaceSong = onCall({ memory: '512MiB', timeoutSeconds: 120 }, asy
  * song is only re-downloaded until its `durationVerified` flag is set. Called by
  * the edit view on save; author or admin only.
  */
-export const recomputeDurations = onCall({ memory: '512MiB', timeoutSeconds: 300 }, async (req) => {
+export const recomputeDurations = onCall({ memory: '1GiB', timeoutSeconds: 300 }, async (req) => {
   const { email } = await requireAllowlistedCaller(req.auth);
   const { compilationId, force } = req.data || {};
   if (!compilationId) {

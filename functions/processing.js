@@ -4,7 +4,11 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { parseBuffer } from 'music-metadata';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import ffmpeg from 'fluent-ffmpeg';
-import { Readable, PassThrough } from 'stream';
+import { Readable } from 'stream';
+import { readFile, unlink } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { randomUUID } from 'crypto';
 
 import { computeMp3Hash, getStorePath } from './hash.js';
 import { isAdminEmail } from './auth.js';
@@ -16,23 +20,41 @@ if (admin.apps.length === 0) {
   admin.initializeApp();
 }
 
+// Bumped whenever the duration/transcode pipeline changes in a way that
+// invalidates previously stored values. Songs carry their pipeline version in
+// `durationFixV`; the recompute re-checks anything below the current version.
+export const DURATION_FIX_VERSION = 1;
+
+// Run ffmpeg from an input buffer to a *seekable temp file*, then return the
+// bytes. The output MUST be a real file, not a pipe: with a non-seekable stream
+// ffmpeg can't rewind to write the VBR/Xing header, which leaves the MP3 with a
+// bogus duration (e.g. a 9:38 track reported as 55:19). Writing to disk lets it
+// finalize the header correctly.
+async function ffmpegToTempMp3(inputBuf, configure) {
+  const out = join(tmpdir(), `mp3-${randomUUID()}.mp3`);
+  try {
+    await new Promise((resolve, reject) => {
+      const cmd = ffmpeg(Readable.from(inputBuf)).noVideo().format('mp3');
+      configure(cmd);
+      cmd.on('error', reject).on('end', resolve).save(out);
+    });
+    return await readFile(out);
+  } finally {
+    await unlink(out).catch(() => {});
+  }
+}
+
 async function transcodeToMp3(buf) {
   const probe = await parseBuffer(buf);
   if (probe.format.container === 'MPEG') return buf;
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    const out = new PassThrough();
-    out.on('data', (c) => chunks.push(c));
-    out.on('end', () => resolve(Buffer.concat(chunks)));
-    out.on('error', reject);
-    ffmpeg(Readable.from(buf))
-      .noVideo()
-      .audioCodec('libmp3lame')
-      .audioQuality(2)
-      .format('mp3')
-      .on('error', reject)
-      .pipe(out);
-  });
+  return ffmpegToTempMp3(buf, (cmd) => cmd.audioCodec('libmp3lame').audioQuality(2));
+}
+
+// Losslessly re-mux an MP3 (copy the audio frames, rewrite a correct header) to
+// repair files an older pipe-based transcode left with a broken/missing VBR
+// header. Returns the repaired bytes.
+async function remuxMp3(buf) {
+  return ffmpegToTempMp3(buf, (cmd) => cmd.audioCodec('copy'));
 }
 
 /**
@@ -97,7 +119,7 @@ export async function processSongFromStaging({ tempPath, compilationId, order })
     year: year || null,
     track: trackNo,
     duration: duration || null,
-    durationVerified: true,
+    durationFixV: DURATION_FIX_VERSION,
     order,
     addedAt: FieldValue.serverTimestamp(),
   };
@@ -153,13 +175,18 @@ export async function processSongFromStaging({ tempPath, compilationId, order })
 }
 
 /**
- * Re-probe stored song durations and correct them in place. An older parser
- * wrote some bogus durations (e.g. a 9:38 track saved as 55:19); this re-reads
- * each song's binary from /store/ with the current parser and fixes the song
- * doc + the compilation's totalDuration.
+ * Repair stored song durations in place. An older transcode wrote MP3s through a
+ * non-seekable pipe, leaving a broken VBR header that reports a bogus duration
+ * (e.g. a 9:38 track measured as 55:19) — the bad value is baked into the file,
+ * so re-parsing alone can't fix it. For each song we download the binary, re-mux
+ * it (lossless: copies the audio, rewrites a correct header), re-measure, and —
+ * if the duration was wrong — overwrite the stored file with the repaired one so
+ * playback/seeking work too. The song doc + the compilation's totalDuration are
+ * then corrected.
  *
- * Each song carries a `durationVerified` flag once checked, so this only pays
- * the (expensive) binary download the first time. Pass `force` to re-check all.
+ * Each song carries a `durationFixV` pipeline version once processed, so this
+ * only pays the (expensive) download+remux until that matches the current
+ * version. Pass `force` to re-check everything regardless.
  *
  * @returns {Promise<{songCount, checked, fixed, totalDuration, durations}>}
  */
@@ -181,23 +208,37 @@ export async function recomputeDurationsFromStore({ compilationId, force = false
   for (const d of songsSnap.docs) {
     const s = d.data();
     let duration = s.duration || 0;
-    const needsCheck = (force || !s.durationVerified) && s.storagePath;
+    const needsCheck = (force || s.durationFixV !== DURATION_FIX_VERSION) && s.storagePath;
     if (needsCheck) {
       checked += 1;
       try {
-        const [buf] = await bucket.file(s.storagePath).download();
-        const meta = await parseBuffer(buf, 'audio/mpeg');
+        const file = bucket.file(s.storagePath);
+        const [buf] = await file.download();
+        // Re-mux to rewrite a correct header, then measure the repaired bytes.
+        const repaired = await remuxMp3(buf);
+        const meta = await parseBuffer(repaired, 'audio/mpeg', { duration: true });
         const probed = meta.format?.duration || 0;
         if (probed > 0) {
-          if (Math.abs(probed - (s.duration || 0)) > 1) fixed += 1;
+          const wasWrong = Math.abs(probed - (s.duration || 0)) > 1;
+          if (wasWrong) {
+            fixed += 1;
+            // The stored file's header was broken — replace it with the repaired
+            // copy so the player's duration/seek bar is correct as well.
+            if (repaired.length) {
+              await file.save(repaired, {
+                metadata: { contentType: 'audio/mpeg', cacheControl: 'public, max-age=31536000' },
+                resumable: false,
+              });
+            }
+          }
           duration = probed;
           writer.set(d.ref, {
             duration,
-            durationVerified: true,
+            durationFixV: DURATION_FIX_VERSION,
             updatedAt: FieldValue.serverTimestamp(),
           }, { merge: true });
         }
-        // probed === 0 → leave duration + verified flag untouched so it retries.
+        // probed === 0 → leave duration + version untouched so it retries later.
       } catch (e) {
         console.warn('recomputeDurations: failed for song', d.id, e.message);
       }
@@ -284,7 +325,7 @@ export async function replaceSongFromStaging({ tempPath, compilationId, songId, 
     hash,
     storagePath,
     duration: newDuration,
-    durationVerified: true,
+    durationFixV: DURATION_FIX_VERSION,
     updatedAt: FieldValue.serverTimestamp(),
   }, { merge: true });
 
