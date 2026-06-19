@@ -66,6 +66,29 @@ function doubalonChipsHTML(doublons, currentCompId) {
   return `<div class="tk-doublons">${chips.join('')}</div>`;
 }
 
+// Discogs enrichment line for a track: facts (year · label · town, country), a
+// link to the release page, and a toggle for the artist bio. Returns '' when the
+// track carries no enrichment.
+function enrichInfoHTML(t) {
+  const facts = [];
+  if (t.year) facts.push(escape(String(t.year)));
+  if (t.label) facts.push(escape(t.label));
+  const place = [t.artistTown, t.artistCountry].filter(Boolean).join(', ');
+  if (place) facts.push(escape(place));
+
+  const link = t.discogsUrl
+    ? `<a class="tk-discogs" href="${escape(t.discogsUrl)}" target="_blank" rel="noopener" title="Voir le disque sur Discogs">Discogs ↗</a>`
+    : '';
+  const bioBtn = t.artistBio
+    ? `<button type="button" class="tk-bio-toggle" aria-expanded="false">bio</button>`
+    : '';
+  if (!facts.length && !link && !bioBtn) return '';
+
+  const factsHTML = facts.length ? `<span class="tk-facts">${facts.join(' · ')}</span>` : '';
+  const bioHTML = t.artistBio ? `<div class="tk-bio" hidden>${escape(t.artistBio)}</div>` : '';
+  return `<div class="tk-info">${factsHTML}${link}${bioBtn}</div>${bioHTML}`;
+}
+
 function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -114,6 +137,13 @@ export async function mount(el, { params }) {
       compilationTitle: comp.title,
       coverPath: comp.coverPath || null,
       doublons: s.doublons || null,
+      // Discogs enrichment (see functions/discogs.js). Any may be absent.
+      year: s.year || null,
+      label: s.label || null,
+      artistBio: s.artistBio || null,
+      artistCountry: s.artistCountry || null,
+      artistTown: s.artistTown || null,
+      discogsUrl: s.discogs?.releaseUrl || null,
     };
   });
 
@@ -184,6 +214,7 @@ export async function mount(el, { params }) {
           <div class="tk-text">
             <div class="title">${escape(t.title)}</div>
             <div class="artist">${escape(t.artist)}</div>
+            ${enrichInfoHTML(t)}
           </div>
           ${doubalonChipsHTML(t.doublons, id)}
         </div>
@@ -192,8 +223,20 @@ export async function mount(el, { params }) {
       li.addEventListener('click', (e) => {
         if (e.target.closest('.rx')) return;
         if (e.target.closest('.tk-doublons')) return;
+        if (e.target.closest('.tk-info') || e.target.closest('.tk-bio')) return;
         playQueue(songs, { startIndex: i, sourceLabel: liveCompTitle });
       });
+      // Bio toggle reveals/hides the artist bio inline.
+      const bioToggle = li.querySelector('.tk-bio-toggle');
+      if (bioToggle) {
+        bioToggle.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const bio = li.querySelector('.tk-bio');
+          const show = bio.hidden;
+          bio.hidden = !show;
+          bioToggle.setAttribute('aria-expanded', String(show));
+        });
+      }
       const rx = createReactionControl(t.songId, { compact: false });
       li.querySelector('.tk-text').appendChild(rx.el);
       t.rxControl = rx;

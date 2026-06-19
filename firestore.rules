@@ -88,6 +88,14 @@ service cloud.firestore {
         allow read: if isSignedIn() && callerEmail() == email;
         allow write: if isSignedIn() && callerEmail() == email;
       }
+
+      // Per-user private secrets, e.g. /private/discogs = { token, updatedAt }.
+      // Owner-only read/write — never readable by other users. Cloud Functions
+      // (Admin SDK) bypass these rules to read the token for enrichment, and to
+      // fall back to an admin's token when the uploader has none.
+      match /private/{doc} {
+        allow read, write: if isSignedIn() && callerEmail() == email;
+      }
     }
 
     // Compilations: allowlisted users read; the owning user (author == email)

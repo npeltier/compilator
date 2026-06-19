@@ -133,6 +133,22 @@ export async function mount(el) {
       </section>
 
       <section class="section" style="margin-top:64px;">
+        <h3>Discogs</h3>
+        <p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 16px;">
+          Ton jeton Discogs personnel sert à enrichir les morceaux que tu envoies (bio de l'artiste,
+          année et label du premier disque). Génères-en un sur
+          <a href="https://www.discogs.com/settings/developers" target="_blank" rel="noopener">discogs.com/settings/developers</a>.
+        </p>
+        <div id="discogsError" class="error" hidden></div>
+        <div id="discogsOk" class="notice" hidden>Jeton Discogs enregistré.</div>
+        <form id="discogsForm">
+          <label for="discogsToken">Jeton personnel</label>
+          <input id="discogsToken" type="password" autocomplete="off">
+          <button type="submit" class="btn-accent" style="margin-top:16px;">Enregistrer le jeton</button>
+        </form>
+      </section>
+
+      <section class="section" style="margin-top:64px;">
         <h3>Mot de passe</h3>
         <p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 16px;">
           Change le mot de passe qu'on t'a envoyé par mail.
@@ -229,6 +245,31 @@ export async function mount(el) {
       await setDoc(userDocRef, { displayName, updatedAt: serverTimestamp() }, { merge: true });
       updateUserLocal(emailKey, { displayName });
       window.dispatchEvent(new CustomEvent('profile-updated'));
+      okEl.hidden = false;
+    } catch (err) {
+      errEl.textContent = err.message; errEl.hidden = false;
+    }
+  });
+
+  // ---- Discogs token (stored in the owner-only /users/{email}/private/discogs) ----
+  const discogsDocRef = doc(db, 'users', emailKey, 'private', 'discogs');
+  const discogsInput = el.querySelector('#discogsToken');
+  getDoc(discogsDocRef).then((snap) => {
+    if (snap.exists() && snap.data().token) discogsInput.placeholder = '•••••••• (enregistré)';
+    else discogsInput.placeholder = 'Colle ton jeton ici';
+  }).catch(() => { discogsInput.placeholder = 'Colle ton jeton ici'; });
+
+  el.querySelector('#discogsForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = el.querySelector('#discogsError');
+    const okEl = el.querySelector('#discogsOk');
+    errEl.hidden = true; okEl.hidden = true;
+    const token = discogsInput.value.trim();
+    if (!token) { errEl.textContent = 'Colle un jeton à enregistrer.'; errEl.hidden = false; return; }
+    try {
+      await setDoc(discogsDocRef, { token, updatedAt: serverTimestamp() }, { merge: true });
+      discogsInput.value = '';
+      discogsInput.placeholder = '•••••••• (enregistré)';
       okEl.hidden = false;
     } catch (err) {
       errEl.textContent = err.message; errEl.hidden = false;

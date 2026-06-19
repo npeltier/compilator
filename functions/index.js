@@ -1,5 +1,5 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import { onDocumentWritten } from 'firebase-functions/v2/firestore';
+import { onDocumentWritten, onDocumentCreated } from 'firebase-functions/v2/firestore';
 import admin from 'firebase-admin';
 
 import { isAdminEmail, requireAllowlistedCaller } from './auth.js';
@@ -9,6 +9,7 @@ import {
   replaceSongFromStaging,
   uploadCoverFromStaging,
 } from './processing.js';
+import { enrichSong, isEnrichable, resolveToken } from './discogs.js';
 import { FieldValue } from 'firebase-admin/firestore';
 
 if (admin.apps.length === 0) {
@@ -241,6 +242,50 @@ async function bumpRev(field) {
 export const onCompilationWrite = onDocumentWritten('compilations/{compId}', () => bumpRev('coreRev'));
 export const onUserWrite = onDocumentWritten('users/{email}', () => bumpRev('coreRev'));
 export const onSongWrite = onDocumentWritten('compilations/{compId}/songs/{songId}', () => bumpRev('songsRev'));
+
+// ---------------------------------------------------------------------------
+// Discogs enrichment
+//
+// When a song row is first created, look it up on Discogs and merge in the
+// original-release year, label, a short artist bio and a (best-effort) country,
+// plus a link to the release page. Runs in the background so uploads stay fast.
+//
+// `maxInstances: 1` serializes all enrichment into a single worker — a simple,
+// robust global rate-limiter for this low-volume app, so we never blow past the
+// per-token Discogs limit (the module also backs off on 429). We listen on
+// CREATE (not write), so the enrichment's own merge-update doesn't re-trigger us;
+// that update still fires onSongWrite above, bumping songsRev so clients refresh.
+const DISCOGS_TOKEN = (email) => resolveToken(admin.firestore(), email);
+
+export const enrichSongOnCreate = onDocumentCreated(
+  { document: 'compilations/{compId}/songs/{songId}', maxInstances: 1, memory: '256MiB', timeoutSeconds: 120 },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const song = snap.data();
+
+    if (!isEnrichable(song.title, song.artist)) {
+      await snap.ref.set({ enrichStatus: 'skipped', enrichedAt: FieldValue.serverTimestamp() }, { merge: true });
+      return;
+    }
+
+    const comp = await admin.firestore().collection('compilations').doc(event.params.compId).get().catch(() => null);
+    const token = comp?.exists ? await DISCOGS_TOKEN(comp.data().author) : null;
+    if (!token) {
+      // No token anywhere — leave it for the backfill script to retry later.
+      await snap.ref.set({ enrichStatus: 'error', enrichedAt: FieldValue.serverTimestamp() }, { merge: true });
+      return;
+    }
+
+    try {
+      const fields = await enrichSong(song, token);
+      await snap.ref.set({ ...fields, enrichedAt: FieldValue.serverTimestamp() }, { merge: true });
+    } catch (err) {
+      console.error('enrichSongOnCreate error', err);
+      await snap.ref.set({ enrichStatus: 'error', enrichedAt: FieldValue.serverTimestamp() }, { merge: true });
+    }
+  },
+);
 
 // Staging cleanup of /uploads/** is handled by a Cloud Storage lifecycle rule
 // configured outside of code (auto-delete after 1 day) — no scheduled function,

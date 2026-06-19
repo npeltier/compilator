@@ -527,6 +527,15 @@ h3 { font-size: 24px; letter-spacing: 0.04em; }
 .doublon-chip.same-track .doublon-cover { border: 2px solid var(--accent); color: var(--accent); }
 .doublon-chip.same-artist .doublon-cover { border: 2px solid var(--ink-dim); color: var(--ink-dim); }
 
+/* Discogs enrichment line under the artist (year · label · town, country + bio). */
+.tracklist .tk-info { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 5px; font-size: 12px; color: var(--ink-faint); }
+.tracklist .tk-facts { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+.tracklist .tk-discogs { color: var(--ink-dim); text-decoration: none; border-bottom: 1px solid transparent; }
+.tracklist .tk-discogs:hover { color: var(--accent); border-bottom-color: var(--accent); }
+.tracklist .tk-bio-toggle { background: none; border: none; padding: 0; font: inherit; color: var(--ink-faint); cursor: pointer; text-decoration: underline dotted; }
+.tracklist .tk-bio-toggle:hover, .tracklist .tk-bio-toggle[aria-expanded="true"] { color: var(--accent); }
+.tracklist .tk-bio { margin-top: 6px; max-width: 64ch; font-size: 12px; line-height: 1.55; color: var(--ink-dim); white-space: pre-line; }
+
 /* -------- player bar -------- */
 .player-bar {
   position: fixed;

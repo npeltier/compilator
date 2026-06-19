@@ -1,4 +1,4 @@
-function normalizeArtist(artist) {
+export function normalizeArtist(artist) {
   return (artist || '').toLowerCase().trim();
 }
 
