@@ -504,9 +504,23 @@ h3 { font-size: 24px; letter-spacing: 0.04em; }
 .tracklist .dur { color: var(--ink-faint); font-variant-numeric: tabular-nums; font-size: 13px; }
 .tracklist .tk-meta { min-width: 0; display: flex; align-items: flex-start; gap: 16px; }
 .tracklist .tk-text { min-width: 0; flex: 0 1 48%; }
-.tracklist .tk-doublons { display: flex; gap: 6px; flex: 1 1 0; min-width: 0; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
-.tracklist .doublon-chip { flex: 0 0 auto; }
-.doublon-chip { display: inline-block; text-decoration: none; border-radius: 5px; opacity: 0.85; transition: opacity 100ms ease, transform 100ms ease; }
+.tracklist .tk-doublons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 3px 0;                   /* room for the hover scale, since overflow-y is now clipped */
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;            /* Firefox: hide track, still scrollable */
+  -webkit-overflow-scrolling: touch;
+  /* Fade the trailing edge so a clipped row reads as "scroll for more". */
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+          mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+}
+.tracklist .tk-doublons::-webkit-scrollbar { display: none; }  /* WebKit: hide track */
+.doublon-chip { flex: 0 0 auto; text-decoration: none; border-radius: 5px; opacity: 0.85; transition: opacity 100ms ease, transform 100ms ease; }
 .doublon-chip:hover { opacity: 1; transform: scale(1.05); }
 .doublon-cover { width: 44px; height: 44px; border-radius: 5px; background-size: cover; background-position: center; font-size: 16px; display: flex; align-items: center; justify-content: center; }
 .doublon-cover.placeholder { font-weight: 600; }
