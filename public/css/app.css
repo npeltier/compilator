@@ -1032,6 +1032,10 @@ body.has-player { padding-bottom: 100px; }
   .player-bar .time { display: none; }
   .player-bar #pb-stop { display: none; }
   .player-bar .pb-right { justify-content: flex-start; }
+  /* Control sits at the left edge now, so the palette must open rightward
+     to stay on screen (mirrors the right-anchored desktop placement). */
+  .player-bar .rx-palette,
+  .player-bar .rx-tooltip { left: 0; right: auto; }
   body.has-player { padding-bottom: 160px; }
 }
 
