@@ -161,7 +161,7 @@ export function setViewer(email, isAdmin) {
 }
 export function isCompVisible(comp) {
   if (!comp) return false;
-  return comp.status !== 'draft' || viewerIsAdmin || comp.author === viewerEmail;
+  return comp.status === 'published' || viewerIsAdmin || comp.author === viewerEmail;
 }
 // Compilations the current viewer may see (published + own/all drafts).
 export function visibleCompilations() {

@@ -117,8 +117,8 @@ export async function mount(el, { params }) {
   const emailKey = user.email.toLowerCase();
   const canEdit = comp.author === emailKey || isAdminSync(user.email);
 
-  // Drafts are private to their author (and admins) until published.
-  if (comp.status === 'draft' && !canEdit) {
+  // Unpublished compilations are private to their author (and admins).
+  if (comp.status !== 'published' && !canEdit) {
     main.innerHTML = '<div class="notice">Compilation introuvable.</div>';
     return;
   }
