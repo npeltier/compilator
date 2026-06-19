@@ -64,7 +64,7 @@ export function createReactionControl(songId, { compact = false } = {}) {
 
   function openPalette() {
     if (closeOpenPalette) closeOpenPalette();
-    palette = renderPalette((emoji) => toggleEmoji(songId, emoji), getMyEmojis(songId));
+    palette = renderPalette((emoji) => { toggleEmoji(songId, emoji); closePalette(); }, getMyEmojis(songId));
     el.appendChild(palette);
     addBtn.setAttribute('aria-expanded', 'true');
     closeOpenPalette = closePalette;
@@ -102,12 +102,18 @@ export function createReactionControl(songId, { compact = false } = {}) {
       const names = users.map(displayNameFor).join(', ');
       const chip = document.createElement('button');
       chip.type = 'button';
-      chip.className = 'rx-chip' + (users.includes(me) ? ' mine' : '');
+      const isMine = users.includes(me);
+      chip.className = 'rx-chip' + (isMine ? ' mine' : '');
       chip.title = names;
       chip.setAttribute('aria-label', `${emoji} : ${names}`);
       chip.innerHTML = `<span class="rx-emo">${emoji}</span>`
         + (users.length > 1 ? `<span class="rx-count">${users.length}</span>` : '');
-      chip.addEventListener('click', (e) => { e.stopPropagation(); toggleTooltip(names); });
+      // Clicking my own reaction removes it; clicking someone else's reveals who reacted.
+      chip.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (isMine) toggleEmoji(songId, emoji);
+        else toggleTooltip(names);
+      });
       strip.appendChild(chip);
     }
     if (palette) {
