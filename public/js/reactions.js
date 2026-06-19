@@ -34,13 +34,15 @@ export const EMOJIS = [
   // Dance
   '🕺', '💃',
   // Music
-  '🎸', '🥁', '🎷',
+  '🎸', '🥁', '🎷', '🪗', '🛏️',
   // Party & sparks
-  '🔥', '🎉', '✨', '🧨', '❄️',
+  '🔥', '🎉', '✨', '🧨',
   // Drinks
   '🍺', '🍸',
   // Nature & misc
-  '🍅', '🌼', '🦄', '🧅', '🏳️‍🌈',
+  '🍅', '🌼', '🦄', '🧅','🍝',
+  // Flags
+  '🇯🇲','🏳️‍🌈',
 ];
 
 // Normalize a reaction doc to an emoji array, tolerating the legacy shape.

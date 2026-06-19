@@ -502,13 +502,16 @@ h3 { font-size: 24px; letter-spacing: 0.04em; }
 .tracklist .title { font-family: var(--display); font-size: 19px; letter-spacing: 0.03em; }
 .tracklist .artist { color: var(--ink-dim); font-size: 13px; font-style: italic; }
 .tracklist .dur { color: var(--ink-faint); font-variant-numeric: tabular-nums; font-size: 13px; }
-.tracklist .tk-doublons { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
-.doublon-chip { display: inline-block; text-decoration: none; border-radius: 3px; opacity: 0.7; }
-.doublon-chip:hover { opacity: 1; }
-.doublon-cover { width: 20px; height: 20px; border-radius: 3px; background-size: cover; background-position: center; font-size: 9px; display: flex; align-items: center; justify-content: center; }
+.tracklist .tk-meta { min-width: 0; display: flex; align-items: flex-start; gap: 16px; }
+.tracklist .tk-text { min-width: 0; flex: 0 1 48%; }
+.tracklist .tk-doublons { display: flex; gap: 6px; flex: 1 1 0; min-width: 0; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+.tracklist .doublon-chip { flex: 0 0 auto; }
+.doublon-chip { display: inline-block; text-decoration: none; border-radius: 5px; opacity: 0.85; transition: opacity 100ms ease, transform 100ms ease; }
+.doublon-chip:hover { opacity: 1; transform: scale(1.05); }
+.doublon-cover { width: 44px; height: 44px; border-radius: 5px; background-size: cover; background-position: center; font-size: 16px; display: flex; align-items: center; justify-content: center; }
 .doublon-cover.placeholder { font-weight: 600; }
-.doublon-chip.same-track .doublon-cover { border: 1.5px solid var(--accent); color: var(--accent); }
-.doublon-chip.same-artist .doublon-cover { border: 1.5px solid var(--ink-dim); color: var(--ink-dim); }
+.doublon-chip.same-track .doublon-cover { border: 2px solid var(--accent); color: var(--accent); }
+.doublon-chip.same-artist .doublon-cover { border: 2px solid var(--ink-dim); color: var(--ink-dim); }
 
 /* -------- player bar -------- */
 .player-bar {
@@ -622,7 +625,6 @@ body.has-player { padding-bottom: 100px; }
 }
 
 /* -------- inline track reactions (compilation page, view mode) -------- */
-.tracklist .tk-meta { min-width: 0; }
 
 /* -------- emoji reaction control (track rows + player bar) -------- */
 .rx { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }

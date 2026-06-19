@@ -181,8 +181,10 @@ export async function mount(el, { params }) {
       li.innerHTML = `
         <span class="num">${i + 1}</span>
         <div class="tk-meta">
-          <div class="title">${escape(t.title)}</div>
-          <div class="artist">${escape(t.artist)}</div>
+          <div class="tk-text">
+            <div class="title">${escape(t.title)}</div>
+            <div class="artist">${escape(t.artist)}</div>
+          </div>
           ${doubalonChipsHTML(t.doublons, id)}
         </div>
         <span class="dur">${fmt(t.duration)}</span>
@@ -193,7 +195,7 @@ export async function mount(el, { params }) {
         playQueue(songs, { startIndex: i, sourceLabel: liveCompTitle });
       });
       const rx = createReactionControl(t.songId, { compact: false });
-      li.querySelector('.tk-meta').appendChild(rx.el);
+      li.querySelector('.tk-text').appendChild(rx.el);
       t.rxControl = rx;
       rxControls.push(rx);
       tracksEl.appendChild(li);
