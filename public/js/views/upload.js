@@ -7,7 +7,7 @@
 // of creating a second. If it's already published, we send them to it.
 
 import { auth, db } from '../firebase-init.js';
-import { uploadSong, uploadCover, runWithConcurrency } from '../upload-pipeline.js';
+import { uploadSong, uploadCover, runWithConcurrency, recomputeDurations } from '../upload-pipeline.js';
 import { nextCompilationSlot, slotLabel, deadlineLabel } from '../slot.js';
 import { navigate } from '../router.js';
 import { allCompilations, displayNameFor, upsertCompilationLocal } from '../catalog.js';
@@ -321,6 +321,23 @@ export async function mount(el) {
         updatedAt: serverTimestamp(),
       });
       await batch.commit();
+
+      // 4b. Fix any durations an older parser got wrong. The server re-probes
+      // the stored binaries and returns corrected per-song durations + the new
+      // total. Cheap after the first save (each song is only re-checked once).
+      try {
+        const res = await recomputeDurations(compId);
+        if (res?.durations) {
+          survivors.forEach((it) => {
+            const fixed = res.durations[it.songId];
+            if (typeof fixed === 'number') it.duration = fixed;
+          });
+          total = res.totalDuration ?? total;
+          renderQueue();
+        }
+      } catch (e) {
+        console.warn('recomputeDurations failed (non-fatal):', e);
+      }
 
       // 5. Sync local catalog + UI.
       upsertCompilationLocal(compId, {

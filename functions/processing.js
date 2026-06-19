@@ -97,6 +97,7 @@ export async function processSongFromStaging({ tempPath, compilationId, order })
     year: year || null,
     track: trackNo,
     duration: duration || null,
+    durationVerified: true,
     order,
     addedAt: FieldValue.serverTimestamp(),
   };
@@ -149,6 +150,69 @@ export async function processSongFromStaging({ tempPath, compilationId, order })
     duration: songData.duration,
     coverWritten,
   };
+}
+
+/**
+ * Re-probe stored song durations and correct them in place. An older parser
+ * wrote some bogus durations (e.g. a 9:38 track saved as 55:19); this re-reads
+ * each song's binary from /store/ with the current parser and fixes the song
+ * doc + the compilation's totalDuration.
+ *
+ * Each song carries a `durationVerified` flag once checked, so this only pays
+ * the (expensive) binary download the first time. Pass `force` to re-check all.
+ *
+ * @returns {Promise<{songCount, checked, fixed, totalDuration, durations}>}
+ */
+export async function recomputeDurationsFromStore({ compilationId, force = false }) {
+  if (!compilationId) {
+    throw new Error('recomputeDurationsFromStore: missing compilationId');
+  }
+  const bucket = getStorage().bucket();
+  const db = getFirestore();
+  const compRef = db.collection('compilations').doc(compilationId);
+  const songsSnap = await compRef.collection('songs').get();
+
+  let total = 0;
+  let checked = 0;
+  let fixed = 0;
+  const durations = {}; // songId -> duration, so the client can refresh its UI
+  const writer = db.bulkWriter();
+
+  for (const d of songsSnap.docs) {
+    const s = d.data();
+    let duration = s.duration || 0;
+    const needsCheck = (force || !s.durationVerified) && s.storagePath;
+    if (needsCheck) {
+      checked += 1;
+      try {
+        const [buf] = await bucket.file(s.storagePath).download();
+        const meta = await parseBuffer(buf, 'audio/mpeg');
+        const probed = meta.format?.duration || 0;
+        if (probed > 0) {
+          if (Math.abs(probed - (s.duration || 0)) > 1) fixed += 1;
+          duration = probed;
+          writer.set(d.ref, {
+            duration,
+            durationVerified: true,
+            updatedAt: FieldValue.serverTimestamp(),
+          }, { merge: true });
+        }
+        // probed === 0 → leave duration + verified flag untouched so it retries.
+      } catch (e) {
+        console.warn('recomputeDurations: failed for song', d.id, e.message);
+      }
+    }
+    durations[d.id] = duration;
+    total += duration;
+  }
+
+  await writer.close();
+  await compRef.set({
+    totalDuration: total,
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  return { songCount: songsSnap.size, checked, fixed, totalDuration: total, durations };
 }
 
 /**
@@ -220,6 +284,7 @@ export async function replaceSongFromStaging({ tempPath, compilationId, songId, 
     hash,
     storagePath,
     duration: newDuration,
+    durationVerified: true,
     updatedAt: FieldValue.serverTimestamp(),
   }, { merge: true });
 

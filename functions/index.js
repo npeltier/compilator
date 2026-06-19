@@ -6,6 +6,7 @@ import { isAdminEmail, requireAllowlistedCaller } from './auth.js';
 import {
   deleteCompilationFully,
   processSongFromStaging,
+  recomputeDurationsFromStore,
   replaceSongFromStaging,
   uploadCoverFromStaging,
 } from './processing.js';
@@ -102,6 +103,30 @@ export const replaceSong = onCall({ memory: '512MiB', timeoutSeconds: 120 }, asy
   } catch (err) {
     console.error('replaceSong error', err);
     throw new HttpsError('internal', err.message || 'Failed to replace song.');
+  }
+});
+
+/**
+ * recomputeDurations({ compilationId, force? })
+ *
+ * Re-probe the stored binaries to fix song durations an older parser got wrong,
+ * and refresh the compilation's totalDuration. Cheap after the first pass — each
+ * song is only re-downloaded until its `durationVerified` flag is set. Called by
+ * the edit view on save; author or admin only.
+ */
+export const recomputeDurations = onCall({ memory: '512MiB', timeoutSeconds: 300 }, async (req) => {
+  const { email } = await requireAllowlistedCaller(req.auth);
+  const { compilationId, force } = req.data || {};
+  if (!compilationId) {
+    throw new HttpsError('invalid-argument', 'compilationId is required.');
+  }
+  const comp = await loadCompilationOrThrow(compilationId);
+  await requireAuthorOrAdmin(comp, email);
+  try {
+    return await recomputeDurationsFromStore({ compilationId, force: !!force });
+  } catch (err) {
+    console.error('recomputeDurations error', err);
+    throw new HttpsError('internal', err.message || 'Failed to recompute durations.');
   }
 });
 

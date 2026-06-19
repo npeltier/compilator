@@ -46,7 +46,7 @@ const collectionGroupMock = jest.fn(() => ({
   get: collectionGroupGet,
 }));
 
-const bulkWriterMock = { delete: jest.fn(), close: jest.fn(() => Promise.resolve()) };
+const bulkWriterMock = { delete: jest.fn(), set: jest.fn(), close: jest.fn(() => Promise.resolve()) };
 
 const firestoreMock = {
   collection: jest.fn((name) => {
@@ -74,6 +74,7 @@ const storeFileMock = {
   save: jest.fn(() => Promise.resolve()),
   exists: jest.fn(() => Promise.resolve([false])),
   delete: jest.fn(() => Promise.resolve()),
+  download: jest.fn(() => Promise.resolve([Buffer.from('mp3 content')])),
 };
 const coverFileMock = {
   save: jest.fn(() => Promise.resolve()),
@@ -106,6 +107,7 @@ const {
   processSongFromStaging,
   replaceSongFromStaging,
   deleteCompilationFully,
+  recomputeDurationsFromStore,
 } = await import('../processing.js');
 
 describe('processSongFromStaging', () => {
@@ -293,5 +295,47 @@ describe('deleteCompilationFully', () => {
 
   test('throws on missing args', async () => {
     await expect(deleteCompilationFully({})).rejects.toThrow();
+  });
+});
+
+describe('recomputeDurationsFromStore', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test('re-probes only unverified songs, fixes bad durations, refreshes total', async () => {
+    // parseBuffer mock (module-level) returns duration 180 for any binary.
+    const songDocs = [
+      // Bad duration, never verified → should be re-probed and corrected to 180.
+      { id: 's1', ref: { id: 's1' }, data: () => ({ duration: 3319, storagePath: 'store/ab/h1.mp3' }) },
+      // Already verified → skipped, its 180 is carried into the total untouched.
+      { id: 's2', ref: { id: 's2' }, data: () => ({ duration: 180, durationVerified: true, storagePath: 'store/cd/h2.mp3' }) },
+    ];
+    compRef.collection.mockReturnValue({ get: jest.fn(async () => ({ size: 2, docs: songDocs })) });
+
+    const res = await recomputeDurationsFromStore({ compilationId: 'comp1' });
+
+    expect(res.checked).toBe(1);                 // only the unverified song re-probed
+    expect(res.fixed).toBe(1);                   // 3319 → 180 counts as a fix
+    expect(res.totalDuration).toBe(360);         // 180 (fixed) + 180 (skipped)
+    expect(res.durations).toEqual({ s1: 180, s2: 180 });
+
+    // The fixed song is written with the verified flag; the verified one is not touched.
+    expect(bulkWriterMock.set).toHaveBeenCalledTimes(1);
+    const [ref, patch] = bulkWriterMock.set.mock.calls[0];
+    expect(ref.id).toBe('s1');
+    expect(patch.duration).toBe(180);
+    expect(patch.durationVerified).toBe(true);
+    expect(storeFileMock.download).toHaveBeenCalledTimes(1);
+
+    // Corrected total is persisted on the compilation.
+    expect(compRef.set).toHaveBeenCalledWith(
+      expect.objectContaining({ totalDuration: 360 }),
+      { merge: true },
+    );
+  });
+
+  test('throws on missing compilationId', async () => {
+    await expect(recomputeDurationsFromStore({})).rejects.toThrow();
   });
 });

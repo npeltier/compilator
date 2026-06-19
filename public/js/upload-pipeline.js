@@ -18,6 +18,7 @@ const processSongFn = httpsCallable(functions, 'processSong');
 const uploadCoverFn = httpsCallable(functions, 'uploadCover');
 const replaceSongFn = httpsCallable(functions, 'replaceSong');
 const deleteCompilationFn = httpsCallable(functions, 'deleteCompilation');
+const recomputeDurationsFn = httpsCallable(functions, 'recomputeDurations');
 const upsertUserFn = httpsCallable(functions, 'upsertUser');
 const removeUserFn = httpsCallable(functions, 'removeUser');
 
@@ -116,6 +117,16 @@ export async function replaceSongBinary({ file, compilationId, songId, onProgres
  */
 export async function deleteCompilation(compilationId) {
   const { data } = await deleteCompilationFn({ compilationId });
+  return data;
+}
+
+/**
+ * Re-probe the compilation's stored song durations and fix any an older parser
+ * got wrong. Returns { songCount, checked, fixed, totalDuration, durations },
+ * where `durations` maps songId -> corrected duration (seconds).
+ */
+export async function recomputeDurations(compilationId, { force = false } = {}) {
+  const { data } = await recomputeDurationsFn({ compilationId, force });
   return data;
 }
 
