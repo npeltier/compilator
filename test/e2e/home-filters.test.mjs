@@ -146,14 +146,15 @@ async function run() {
     assert.equal(await selBtn().then((b) => b.hidden), true, 'selection button hidden with no filter');
     ok('filter bar expanded; selection button hidden initially');
 
-    step('season and year are now SEPARATE chip rows');
-    // Other (real/seed) compilations may exist locally, so assert our chips are
-    // PRESENT rather than asserting the full set.
+    step('season (emoji) chips live inside the years pane; year chips alongside');
+    // Seasons are now rendered as emoji (☀️ Été, 🎄 Noël) nested in the years
+    // <details>. Other (real/seed) compilations may exist locally, so assert our
+    // chips are PRESENT rather than asserting the full set.
     const seasonChips = (await labels('#seasonChips .chip')).filter((l) => l !== 'Tout');
     const yearChips = (await labels('#yearChips .chip')).filter((l) => l !== 'Tout');
-    for (const s of ['Été', 'Noël']) assert.ok(seasonChips.includes(s), `season chip "${s}" missing, got ${JSON.stringify(seasonChips)}`);
+    for (const s of ['☀️', '🎄']) assert.ok(seasonChips.includes(s), `season chip "${s}" missing, got ${JSON.stringify(seasonChips)}`);
     for (const y of ['2024', '2025']) assert.ok(yearChips.includes(y), `year chip "${y}" missing, got ${JSON.stringify(yearChips)}`);
-    ok(`season chips include Été/Noël; year chips include 2024/2025`);
+    ok(`season chips include ☀️/🎄; year chips include 2024/2025`);
 
     step('include TWO authors at once (Alpha + Beta)');
     await clickChip('#authorChips', 'Alpha');
@@ -162,8 +163,8 @@ async function run() {
     assert.deepEqual(activeAuthors, ['Alpha', 'Beta'], `expected both authors included, got ${JSON.stringify(activeAuthors)}`);
     ok(`two authors included simultaneously: ${activeAuthors.join(', ')}`);
 
-    step('include season "Été" (decoupled from year) → only summer comps');
-    await clickChip('#seasonChips', 'Été');
+    step('include season "Été" (☀️, decoupled from year) → only summer comps');
+    await clickChip('#seasonChips', '☀️');
     let grid = await ftestTitles();
     assert.deepEqual(grid, ['FTEST Alpha Été 2025', 'FTEST Beta Été 2025'],
       `expected only the two summer comps, got ${JSON.stringify(grid)}`);
@@ -172,8 +173,8 @@ async function run() {
     assert.match(btn.text, /2 compils/, `expected "2 compils", got "${btn.text}"`);
     ok(`grid = 2 summer comps; button = "${btn.text}"`);
 
-    step('also include "Noël" → all four comps (both seasons)');
-    await clickChip('#seasonChips', 'Noël');
+    step('also include "Noël" (🎄) → all four comps (both seasons)');
+    await clickChip('#seasonChips', '🎄');
     grid = await ftestTitles();
     assert.deepEqual(grid, COMPS.map((c) => c.title).sort(), `expected all 4 comps, got ${JSON.stringify(grid)}`);
     assert.match((await selBtn()).text, /4 compils/, 'expected "4 compils"');
