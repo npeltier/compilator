@@ -4,7 +4,7 @@
 import { isAdminSync, requireAuth } from './auth-guard.js';
 import { avatarHTML, paintAvatars } from './avatar.js';
 import { displayNameFor, setViewer } from './catalog.js';
-import { ensureSongsLoaded, loadAllowlist, loadCatalog } from './catalog.js';
+import { ensureSongsLoaded, loadAllowlist, loadCatalog, seedTestAuthors } from './catalog.js';
 import { loadReactions } from './reactions.js';
 import { ensureCommunityReactionsLoaded } from './community-reactions.js';
 import { loadLikedCompilations } from './liked-compilations.js';
@@ -41,6 +41,11 @@ await Promise.all([
 // Tell the catalog who's viewing so it can hide other people's draft
 // compilations from listings / search / shuffle.
 setViewer(user.email, isAdminSync(user.email));
+
+// Dev-only: `?seedAuthors=35` injects fake authors so the filter UI can be
+// tested with many users (in-memory only; never persisted to Firestore).
+const seedN = Number(new URLSearchParams(location.search).get('seedAuthors'));
+if (seedN > 0) seedTestAuthors(seedN);
 
 // Profile link in the top nav: avatar + display name. Rendered after the
 // catalog loads so getUser() resolves the user's avatarPath; paintAvatars then

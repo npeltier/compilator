@@ -298,6 +298,36 @@ export function removeCompilationLocal(id) {
   compilationsById.delete(id);
 }
 
+// Dev-only: inject fake authors (each with one published compilation) into the
+// in-memory catalog so the filter UI can be exercised with many users. Purely
+// local — never writes to Firestore. Gated by `?seedAuthors=N` in app.js.
+const SEED_FIRST = [
+  'Alice', 'Bruno', 'Chloé', 'David', 'Élodie', 'Farid', 'Greg', 'Hana',
+  'Inès', 'Jules', 'Karim', 'Léa', 'Marc', 'Nina', 'Oscar', 'Paul', 'Quentin',
+  'Rose', 'Sam', 'Théo', 'Ugo', 'Valérie', 'Wassim', 'Xavier', 'Yann', 'Zoé',
+  'Anaïs', 'Benoît', 'Camille', 'Damien', 'Emma', 'Félix', 'Gaël', 'Hugo', 'Iris',
+];
+export function seedTestAuthors(n) {
+  const count = Math.max(0, Math.min(35, n | 0));
+  const seasons = ['ete', 'noel'];
+  for (let i = 0; i < count; i++) {
+    const name = SEED_FIRST[i % SEED_FIRST.length];
+    const email = `test-user-${i + 1}@example.com`;
+    usersByEmail.set(email, { email, displayName: `${name} T.` });
+    const id = `seed-comp-${i + 1}`;
+    compilationsById.set(id, {
+      id,
+      author: email,
+      title: `Compil test ${i + 1}`,
+      season: seasons[i % seasons.length],
+      year: 2020 + (i % 6), // spread across a handful of years
+      status: 'published',
+      trackCount: 1 + (i % 12),
+      createdAt: { toMillis: () => 1600000000000 + i * 86400000 },
+    });
+  }
+}
+
 // Build a Track (the shape used by the player queue) from a songId.
 // Returns null if the song isn't in the catalog (defensive — shouldn't happen).
 export function trackFromSongId(songId) {

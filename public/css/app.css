@@ -960,11 +960,57 @@ body.has-player { padding-bottom: 100px; }
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
+  /* Never exceed the viewport — scroll internally instead of overflowing
+     the page (critical on phones with many authors/years). */
+  max-height: calc(100vh - var(--topbar-h, 72px) - 80px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .filter-bar.collapsed .filter-body { display: none; }
 .filter-body .chip-row { margin-bottom: 0; }
 .filter-body .chip-row:empty { display: none; }
-.filter-body .chip-row + .chip-row:not(:empty) { margin-top: 10px; }
+/* Space between successive filter blocks (groups + inline rows). A hidden/empty
+   block stays in source order, so the next visible block still picks up its
+   top margin — robust whether or not a season/year block is present. */
+.filter-body > * + *:not(:empty) { margin-top: 10px; }
+
+/* Collapsible per-dimension groups (auteurs, années). Header shows the count,
+   or the active selection count, and expands to the chip-row beneath it. */
+.filter-group { border: 0; margin: 0; }
+.filter-group[hidden] { display: none; }
+/* Styled like a pressable pill (matching the outer .filter-toggle) so it reads
+   as clickable, with a leading caret that rotates open. */
+.filter-group-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ink-dim);
+  cursor: pointer;
+  list-style: none;
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.filter-group-head::-webkit-details-marker { display: none; }
+.filter-group-head::before {
+  content: '▾';
+  font-size: 10px;
+  transition: transform 160ms ease;
+}
+.filter-group[open] .filter-group-head::before { transform: rotate(180deg); }
+.filter-group-head:hover { color: var(--ink); border-color: var(--ink); }
+/* Active = a filter is applied on this dimension: fill it in like a chip. */
+.filter-group.active .filter-group-head {
+  color: var(--bg);
+  background: var(--ink);
+  border-color: var(--ink);
+}
+.filter-group[open] .chip-row { margin-top: 10px; }
 
 /* -------- author / filter chips -------- */
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 32px; }

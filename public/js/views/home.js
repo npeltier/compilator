@@ -48,9 +48,15 @@ export async function mount(el, { query }) {
       <div id="nextBanner"></div>
       <div class="shuffle-row" id="shuffleRow"></div>
       ${filterBarHTML(`
-        <div class="chip-row" id="authorChips"></div>
-        <div class="chip-row" id="seasonChips"></div>
-        <div class="chip-row" id="yearChips"></div>
+        <details class="filter-group" id="authorGroup">
+          <summary class="filter-group-head"><span id="authorGroupLabel"></span></summary>
+          <div class="chip-row" id="authorChips"></div>
+        </details>
+        <details class="filter-group" id="yearGroup">
+          <summary class="filter-group-head"><span id="yearGroupLabel"></span></summary>
+          <div class="chip-row" id="yearChips"></div>
+          <div class="chip-row" id="seasonChips"></div>
+        </details>
         <div class="chip-row emoji-filter-row" id="emojiFilterRow">
           <span class="emoji-filter-label">Mes tags&nbsp;:</span>
           <div class="emoji-filter-chips" id="emojiFilterChips"></div>
@@ -136,6 +142,9 @@ export async function mount(el, { query }) {
   // button show compilations/songs matching every include constraint (OR within
   // a dimension, AND across dimensions) and none of the exclude ones.
   const seasonLabel = { ete: 'Été', noel: 'Noël', other: 'Autre' };
+  // Compact emoji used for the season filter chips (text labels stay for the
+  // section headings and player source line).
+  const seasonEmoji = { ete: '☀️', noel: '🎄' };
   const seasonOrder = { ete: 0, noel: 1, other: 9 };
   const yearOf = (c) => c.year || new Date(c.createdAt?.toMillis?.() || Date.now()).getFullYear();
   const seasonOf = (c) => c.season || 'other';
@@ -177,6 +186,10 @@ export async function mount(el, { query }) {
   const authorChipsEl = el.querySelector('#authorChips');
   const seasonChipsEl = el.querySelector('#seasonChips');
   const yearChipsEl = el.querySelector('#yearChips');
+  const authorGroup = el.querySelector('#authorGroup');
+  const authorGroupLabel = el.querySelector('#authorGroupLabel');
+  const yearGroup = el.querySelector('#yearGroup');
+  const yearGroupLabel = el.querySelector('#yearGroupLabel');
   const emojiFilterRow = el.querySelector('#emojiFilterRow');
   const emojiFilterChips = el.querySelector('#emojiFilterChips');
   const yearsEl = el.querySelector('#years');
@@ -207,6 +220,12 @@ export async function mount(el, { query }) {
   };
 
   function renderAuthorChips() {
+    authorGroup.hidden = authorEmails.length < 2; // nothing to filter
+    const k = inc.authors.size + exc.authors.size;
+    authorGroupLabel.textContent = k
+      ? `auteurs · ${k} sélectionné${k > 1 ? 's' : ''}`
+      : `${authorEmails.length} auteur${authorEmails.length > 1 ? 's' : ''}`;
+    authorGroup.classList.toggle('active', k > 0);
     authorChipsEl.innerHTML = '';
     authorChipsEl.appendChild(mkChip({
       label: 'Tout', state: dimEmpty('authors') ? 'inc' : null,
@@ -228,13 +247,19 @@ export async function mount(el, { query }) {
       onClick: () => clearDim('seasons'),
     }));
     seasonsPresent.forEach((s) => seasonChipsEl.appendChild(mkChip({
-      label: seasonLabel[s] || s,
+      label: seasonEmoji[s] || seasonLabel[s] || s,
       state: stateOf('seasons', s),
       onClick: () => cycle('seasons', s),
     })));
   }
 
   function renderYearChips() {
+    yearGroup.hidden = yearsPresent.length < 2; // nothing to filter
+    const k = inc.years.size + exc.years.size;
+    yearGroupLabel.textContent = k
+      ? `années · ${k} sélectionnée${k > 1 ? 's' : ''}`
+      : `${yearsPresent.length} année${yearsPresent.length > 1 ? 's' : ''}`;
+    yearGroup.classList.toggle('active', k > 0);
     yearChipsEl.innerHTML = '';
     if (yearsPresent.length < 2) return; // nothing to filter
     yearChipsEl.appendChild(mkChip({
