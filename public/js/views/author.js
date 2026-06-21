@@ -142,9 +142,9 @@ export async function mount(el, { params }) {
   el.querySelector('#empty').hidden = comps.length > 0;
 
   // Distinct (season, year) buckets for this author, sorted by year desc then
-  // by season (Été before Noël within a year).
+  // by season (Noël before Été within a year — newest-first).
   const seasonLabel = { ete: 'Été', noel: 'Noël' };
-  const seasonOrder = { ete: 0, noel: 1 };
+  const seasonOrder = { noel: 0, ete: 1 };
   const buckets = [];
   const seenKeys = new Set();
   comps.forEach((c) => {
@@ -396,7 +396,8 @@ function renderCompilationsGrid(yearsEl, comps, flat = false) {
   if (comps.length === 0) return;
 
   const seasonLabel = { ete: 'Été', noel: 'Noël' };
-  const seasonOrder = { ete: 0, noel: 1 };
+  // Noël before Été within a year — newest-first, consistent with years desc.
+  const seasonOrder = { noel: 0, ete: 1 };
 
   const groupMap = new Map();
   for (const c of comps) {

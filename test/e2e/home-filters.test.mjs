@@ -189,12 +189,12 @@ async function run() {
       `expected the three 2025 comps, got ${JSON.stringify(grid)}`);
     ok('year chip filters across seasons/authors on its own');
 
-    step('summer renders before winter within the same year');
+    step('winter renders before summer within the same year (newest-first)');
     const ordered = await ftestOrdered();
-    const lastEte = ordered.map((t) => /Été/.test(t)).lastIndexOf(true);
-    const firstNoel = ordered.findIndex((t) => /Noël/.test(t));
-    assert.ok(lastEte >= 0 && firstNoel >= 0 && lastEte < firstNoel,
-      `summer should precede winter in DOM order, got ${JSON.stringify(ordered)}`);
+    const lastNoel = ordered.map((t) => /Noël/.test(t)).lastIndexOf(true);
+    const firstEte = ordered.findIndex((t) => /Été/.test(t));
+    assert.ok(lastNoel >= 0 && firstEte >= 0 && lastNoel < firstEte,
+      `winter should precede summer in DOM order, got ${JSON.stringify(ordered)}`);
     ok(`grid order: ${ordered.join(' | ')}`);
 
     step('tri-state: include Alpha, then EXCLUDE Beta (click twice)');

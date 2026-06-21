@@ -539,7 +539,8 @@ export async function mount(el, { query }) {
       const winter = groups.filter((c) => c.season === 'noel');
       const summer = groups.filter((c) => c.season === 'ete');
       const other = groups.filter((c) => c.season !== 'ete' && c.season !== 'noel');
-      for (const [seasonKey, list] of [['ete', summer], ['noel', winter], ['other', other]]) {
+      // Newest-first within a year: Noël (December) above Été (July).
+      for (const [seasonKey, list] of [['noel', winter], ['ete', summer], ['other', other]]) {
         if (list.length === 0) continue;
         const block = document.createElement('section');
         block.className = `season-block ${seasonKey === 'noel' ? 'winter' : seasonKey === 'ete' ? 'summer' : ''}`;
