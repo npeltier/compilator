@@ -16,6 +16,7 @@ import {
   writeBatch,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
 import { coverUrl, invalidateCover } from '../image-url.js';
+import { doublonChipsHTML, enrichFactsHTML, paintDoublonCovers, escape } from '../track-meta.js';
 import { playQueue } from '../player.js';
 import { ensureCommunityReactionsLoaded } from '../community-reactions.js';
 import { createReactionControl } from '../reaction-control.js';
@@ -36,64 +37,6 @@ import { deleteCompilation, replaceSongBinary, uploadCover, recomputeDurations }
 import { navigate } from '../router.js';
 import { avatarHTML, paintAvatars } from '../avatar.js';
 
-function doubalonChipsHTML(doublons, currentCompId) {
-  if (!doublons) return '';
-  const chips = [];
-
-  const seenTrack = new Set();
-  for (const { compilationId } of doublons.sameTrack || []) {
-    if (compilationId === currentCompId || seenTrack.has(compilationId)) continue;
-    seenTrack.add(compilationId);
-    const comp = getCompilation(compilationId);
-    if (!comp) continue;
-    const fallback = escape((comp.title || '?')[0].toUpperCase());
-    const coverAttr = comp.coverPath ? ` data-cover-path="${escape(comp.coverPath)}"` : '';
-    chips.push(`<a class="doublon-chip same-track" href="/c/${compilationId}" title="doublon · ${escape(comp.title)}"><div class="doublon-cover${comp.coverPath ? '' : ' placeholder'}"${coverAttr}>${comp.coverPath ? '' : fallback}</div></a>`);
-  }
-
-  const seenArtist = new Set();
-  for (const { compilationId } of doublons.sameArtist || []) {
-    if (compilationId === currentCompId || seenArtist.has(compilationId)) continue;
-    seenArtist.add(compilationId);
-    const comp = getCompilation(compilationId);
-    if (!comp) continue;
-    const fallback = escape((comp.title || '?')[0].toUpperCase());
-    const coverAttr = comp.coverPath ? ` data-cover-path="${escape(comp.coverPath)}"` : '';
-    chips.push(`<a class="doublon-chip same-artist" href="/c/${compilationId}" title="doublon d'artiste · ${escape(comp.title)}"><div class="doublon-cover${comp.coverPath ? '' : ' placeholder'}"${coverAttr}>${comp.coverPath ? '' : fallback}</div></a>`);
-  }
-
-  if (!chips.length) return '';
-  return `<div class="tk-doublons">${chips.join('')}</div>`;
-}
-
-// Discogs enrichment line for a track: facts (year · label · town, country), a
-// link to the release page, and a toggle for the artist bio. Returns '' when the
-// track carries no enrichment.
-function enrichInfoHTML(t) {
-  const facts = [];
-  if (t.year) facts.push(escape(String(t.year)));
-  if (t.label) facts.push(escape(t.label));
-  const place = [t.artistTown, t.artistCountry].filter(Boolean).join(', ');
-  if (place) facts.push(escape(place));
-
-  const link = t.discogsUrl
-    ? `<a class="tk-discogs" href="${escape(t.discogsUrl)}" target="_blank" rel="noopener" title="Voir le disque sur Discogs">Discogs ↗</a>`
-    : '';
-  const bioBtn = t.artistBio
-    ? `<button type="button" class="tk-bio-toggle" aria-expanded="false">bio</button>`
-    : '';
-  if (!facts.length && !link && !bioBtn) return '';
-
-  const factsHTML = facts.length ? `<span class="tk-facts">${facts.join(' · ')}</span>` : '';
-  const bioHTML = t.artistBio ? `<div class="tk-bio" hidden>${escape(t.artistBio)}</div>` : '';
-  return `<div class="tk-info">${factsHTML}${link}${bioBtn}</div>${bioHTML}`;
-}
-
-function escape(s) {
-  return String(s ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
 function fmt(s) {
   return isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}` : '';
 }
@@ -169,14 +112,6 @@ export async function mount(el, { params }) {
     }
   }
 
-  async function paintDoublonCovers() {
-    const covers = main.querySelectorAll('.doublon-cover[data-cover-path]');
-    await Promise.all([...covers].map(async (el) => {
-      const url = await coverUrl(el.dataset.coverPath);
-      if (url) el.style.backgroundImage = `url(${url})`;
-    }));
-  }
-
   function renderView() {
     mode = 'view';
     editState = null;
@@ -214,9 +149,9 @@ export async function mount(el, { params }) {
           <div class="tk-text">
             <div class="title">${escape(t.title)}</div>
             <div class="artist">${escape(t.artist)}</div>
-            ${enrichInfoHTML(t)}
+            ${enrichFactsHTML(t)}
           </div>
-          ${doubalonChipsHTML(t.doublons, id)}
+          ${doublonChipsHTML(t.doublons, id)}
         </div>
         <span class="dur">${fmt(t.duration)}</span>
       `;
@@ -245,7 +180,7 @@ export async function mount(el, { params }) {
       t.li = li;
     });
 
-    paintDoublonCovers();
+    paintDoublonCovers(main);
 
     // Community emoji aggregate loads lazily; refresh the strips once it's in.
     ensureCommunityReactionsLoaded().then(() => rxControls.forEach((c) => c.refresh()));

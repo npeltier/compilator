@@ -693,6 +693,165 @@ body.has-player { padding-bottom: 100px; }
 .player-bar .rx-palette,
 .player-bar .rx-tooltip { top: auto; bottom: 100%; left: auto; right: 0; margin: 0 0 6px 0; }
 
+/* -------- full-screen player -------- */
+.player-full {
+  position: fixed;
+  inset: 0;
+  z-index: 300; /* above bar (100) and search results (200) */
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow: hidden;
+}
+/* Setting display above overrides the `hidden` attribute's display:none, so
+   restore it explicitly — otherwise the overlay shows by default. */
+.player-full[hidden] { display: none; }
+body.pf-open { overflow: hidden; }
+
+.player-full .pf-min {
+  position: absolute;
+  top: 16px; left: 16px;
+  font-size: 28px;
+  line-height: 1;
+  background: transparent;
+  color: var(--ink-dim);
+  padding: 6px 12px;
+  z-index: 2;
+}
+.player-full .pf-min:hover { color: var(--accent); background: transparent; }
+
+.player-full .pf-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 40px;
+  line-height: 1;
+  background: transparent;
+  color: var(--ink-faint);
+  padding: 8px 14px;
+  z-index: 2;
+}
+.player-full .pf-arrow:hover { color: var(--accent); background: transparent; }
+.player-full .pf-arrow-prev { left: 8px; }
+.player-full .pf-arrow-next { right: 8px; }
+
+.player-full .pf-viewport {
+  flex: 1;
+  width: 100%;
+  max-width: 860px;
+  overflow: hidden;
+  display: flex;
+}
+.player-full .pf-track {
+  display: flex;
+  width: 200%;
+  flex-shrink: 0; /* don't let the viewport squeeze the 200% track to fit — that
+                     would pull the second screen into view beside the first */
+  transition: transform 260ms ease;
+}
+.player-full .pf-screen {
+  width: 50%;
+  flex: 0 0 50%;
+  box-sizing: border-box;
+  padding: 64px 32px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow-y: auto;
+}
+
+.player-full .pf-cover {
+  width: min(84vw, 60vh, 600px);
+  height: min(84vw, 60vh, 600px);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elev-2) center/cover no-repeat;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--display);
+  font-size: 128px;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+.player-full .pf-cover.placeholder {
+  background: linear-gradient(135deg, var(--bg-elev) 0%, var(--bg-elev-2) 100%);
+}
+.player-full .pf-now { text-align: center; margin-top: 28px; max-width: 100%; }
+.player-full .pf-title {
+  font-family: var(--display);
+  font-size: 28px;
+  letter-spacing: 0.03em;
+  line-height: 1.1;
+}
+.player-full .pf-artist { color: var(--ink-dim); font-size: 15px; font-style: italic; margin-top: 6px; }
+
+.player-full .pf-react { margin-top: 22px; justify-content: center; }
+
+.player-full .pf-controls {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  margin-top: 28px;
+}
+.player-full .pf-controls button.icon {
+  background: transparent;
+  color: var(--ink);
+  font-size: 28px;
+  padding: 8px;
+}
+.player-full .pf-controls #pf-play { font-size: 40px; }
+.player-full .pf-controls button.icon:hover { color: var(--accent); background: transparent; }
+
+.player-full .pf-scrubrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 420px;
+  margin-top: 24px;
+}
+.player-full .pf-scrubrow .scrub { flex: 1; }
+.player-full .pf-scrubrow .scrub input[type=range] { width: 100%; padding: 0; height: 4px; }
+.player-full .pf-scrubrow .time { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-faint); }
+
+/* screen 2 — metadata */
+.player-full .pf-meta { width: 100%; max-width: 520px; }
+.player-full .pf-meta-empty { color: var(--ink-faint); font-style: italic; text-align: center; margin-top: 40px; }
+.player-full .pf-meta .tk-info { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 14px; color: var(--ink-faint); }
+.player-full .pf-meta .tk-facts { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+.player-full .pf-meta .tk-discogs { color: var(--ink-dim); text-decoration: none; border-bottom: 1px solid transparent; }
+.player-full .pf-meta .tk-discogs:hover { color: var(--accent); border-bottom-color: var(--accent); }
+.player-full .pf-meta .tk-bio { margin-top: 14px; font-size: 14px; line-height: 1.6; color: var(--ink-dim); white-space: pre-line; }
+.player-full .pf-meta .tk-doublons { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+
+.player-full .pf-dots {
+  display: flex;
+  gap: 10px;
+  padding: 16px 0 24px;
+}
+.player-full .pf-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  background: var(--ink-faint);
+  opacity: 0.4;
+  cursor: pointer;
+  transition: opacity 120ms ease, background 120ms ease;
+}
+.player-full .pf-dot.active { opacity: 1; background: var(--accent); }
+
+/* Desktop: only the cover view. The second screen (bio/Discogs/duplicates)
+   lives on the compilation page; hide it and its navigation here. */
+@media (min-width: 721px) {
+  .player-full .pf-screen-2,
+  .player-full .pf-arrow,
+  .player-full .pf-dots { display: none; }
+  .player-full .pf-track { width: 100%; }
+  .player-full .pf-screen-1 { width: 100%; flex: 0 0 100%; }
+}
+
 /* -------- shuffle row (home) -------- */
 .shuffle-row {
   display: flex;
@@ -1138,6 +1297,11 @@ body.has-player { padding-bottom: 100px; }
   .player-bar .rx-palette,
   .player-bar .rx-tooltip { left: 0; right: auto; }
   body.has-player { padding-bottom: 160px; }
+
+  /* full-screen player: swipe + dots drive navigation; hide edge arrows. */
+  .player-full .pf-arrow { display: none; }
+  .player-full .pf-screen { padding: 56px 20px 16px; }
+  .player-full .pf-title { font-size: 24px; }
 }
 
 /* -------- avatars -------- */
