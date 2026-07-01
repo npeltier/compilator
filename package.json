@@ -23,7 +23,7 @@
   "devDependencies": {
     "firebase": "^12.14.0",
     "firebase-admin": "^13.10.0",
-    "firebase-tools": "^15.19.0",
+    "firebase-tools": "^15.22.4",
     "playwright": "^1.60.0",
     "sharp": "^0.34.5"
   },
