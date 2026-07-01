@@ -100,6 +100,7 @@ jobs:
             --only firestore:rules,storage,functions,hosting \
             --project compilator-83816 \
             --non-interactive \
-            --force
+            --force \
+            --debug
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
