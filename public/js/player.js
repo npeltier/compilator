@@ -24,14 +24,23 @@ import { ensureSongsLoaded, getSong } from './catalog.js';
 import { doublonChipsHTML, enrichFactsHTML, paintDoublonCovers } from './track-meta.js';
 
 const SESSION_KEY = 'compilator.player.v1';
+const VOLUME_KEY = 'compilator.volume.v1'; // persists across sessions (localStorage)
 
 const audio = new Audio();
 audio.preload = 'metadata';
+// Restore the last chosen volume before anything plays. Note: iOS Safari treats
+// `audio.volume` as read-only (hardware buttons own it) — the stored level is a
+// no-op there, but `muted` still works, so mute survives everywhere.
+try {
+  const v = JSON.parse(localStorage.getItem(VOLUME_KEY) || 'null');
+  if (v && typeof v.volume === 'number') { audio.volume = v.volume; audio.muted = !!v.muted; }
+} catch (_) { /* ignore corrupt value */ }
 
 let queue = [];
 let cursor = -1;
 let sourceLabel = '';
-let userPaused = false;
+let userPaused = false;   // the user's intent: true only after an explicit pause
+let switching = false;    // true mid-track-swap, so auto-resume doesn't fight playAt()
 let skippedInARow = 0; // consecutive unavailable tracks — guards an all-missing queue
 let bar;
 const audioUrlCache = new Map(); // storagePath → resolved download URL (per-session)
@@ -100,6 +109,11 @@ export function initPlayer() {
     </div>
     <div class="pb-right">
       <div class="rx-host" id="pb-react"></div>
+      <span class="pb-sep" aria-hidden="true"></span>
+      <div class="pb-volume">
+        <button class="icon" id="pb-mute" title="Couper le son" aria-label="Couper le son">🔊</button>
+        <input type="range" id="pb-vol" class="vol" min="0" max="100" value="100" step="1" aria-label="Volume">
+      </div>
       <button class="icon" id="pb-expand" title="Plein écran" aria-label="Plein écran">⤢</button>
       <button class="btn-ghost" id="pb-stop">Arrêter</button>
     </div>
@@ -123,6 +137,8 @@ export function initPlayer() {
   scrub.addEventListener('input', () => {
     if (audio.duration) audio.currentTime = (scrub.value / 1000) * audio.duration;
   });
+  bar.querySelector('#pb-vol').addEventListener('input', (e) => setVolume(Number(e.target.value)));
+  bar.querySelector('#pb-mute').addEventListener('click', toggleMute);
   audio.addEventListener('timeupdate', () => {
     const d = audio.duration || 0;
     const pos = d ? Math.round((audio.currentTime / d) * 1000) : 0;
@@ -130,26 +146,88 @@ export function initPlayer() {
     bar.querySelector('#pb-cur').textContent = fmt(audio.currentTime);
     bar.querySelector('#pb-tot').textContent = fmt(d);
     syncFullscreenTime(pos, audio.currentTime, d);
+    updatePositionState();
     persistThrottled();
   });
-  audio.addEventListener('play', () => { userPaused = false; setPlayIcon('⏸'); persist(); });
-  audio.addEventListener('pause', () => { setPlayIcon('▶'); persist(); });
-  // Resume after phone-call or system interruption (not user-initiated pause).
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && audio.paused && !userPaused && cursor >= 0) {
-      audio.play().catch(() => {});
-    }
+  audio.addEventListener('play', () => { userPaused = false; setPlayIcon('⏸'); setPlaybackState('playing'); persist(); });
+  audio.addEventListener('pause', () => {
+    setPlayIcon('▶');
+    setPlaybackState('paused');
+    persist();
+    // A pause we didn't ask for (incoming call, another app grabbing audio
+    // focus, notification ducking) — try to pick playback back up.
+    resumeIfInterrupted();
   });
+  audio.addEventListener('volumechange', syncVolumeUI);
+  // Recover from transient buffer stalls (common on mobile radios) without
+  // waiting for the user — the queue prefetch usually has data ready.
+  audio.addEventListener('stalled', () => { if (!userPaused && !switching) audio.play().catch(() => {}); });
+  // Resume once the interruption clears: the app regains focus / visibility
+  // when the user returns from a call, or the OS sends a media-key `play`.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeIfInterrupted(); });
+  window.addEventListener('focus', resumeIfInterrupted);
   audio.addEventListener('ended', () => playAt(cursor + 1));
 
   document.addEventListener('keydown', (e) => {
     if (e.code === 'Escape' && fsOpen) { closeFullscreen(); return; }
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
-    if (e.code === 'Space') { e.preventDefault(); audio.paused ? audio.play().catch(() => {}) : audio.pause(); }
+    if (e.code === 'Space') {
+      e.preventDefault();
+      if (audio.paused) { userPaused = false; audio.play().catch(() => {}); }
+      else { userPaused = true; audio.pause(); }
+    }
   });
 
   setupMediaSession();
+  syncVolumeUI();
   restoreSession();
+}
+
+// ---- volume ----
+// Level lives on the shared `audio` element; two UIs (bar + fullscreen) mirror
+// it. `muted` is kept independent of the slider position so un-muting returns
+// to the previous level (and so a mute survives on iOS, where level is fixed).
+function volGlyph() {
+  if (audio.muted || audio.volume === 0) return '🔇';
+  if (audio.volume < 0.34) return '🔈';
+  if (audio.volume < 0.67) return '🔉';
+  return '🔊';
+}
+function syncVolumeUI() {
+  const pct = Math.round(audio.volume * 100);
+  for (const id of ['pb-vol', 'pf-vol']) {
+    const el = document.getElementById(id);
+    if (el && document.activeElement !== el) el.value = pct;
+  }
+  for (const id of ['pb-mute', 'pf-mute']) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = volGlyph();
+  }
+}
+function setVolume(pct) {
+  audio.volume = Math.max(0, Math.min(1, pct / 100));
+  if (audio.volume > 0 && audio.muted) audio.muted = false; // dragging up un-mutes
+  saveVolume();
+  syncVolumeUI();
+}
+function toggleMute() {
+  audio.muted = !audio.muted;
+  saveVolume();
+  syncVolumeUI();
+}
+function saveVolume() {
+  try { localStorage.setItem(VOLUME_KEY, JSON.stringify({ volume: audio.volume, muted: audio.muted })); } catch (_) { /* ignore */ }
+}
+
+// ---- interruption recovery ----
+// Resume playback after a pause we didn't initiate (phone call, audio-focus
+// steal, radio hiccup). Event-driven only — called from discrete signals
+// (the `pause`/`stalled` events, regained focus/visibility, the OS play key),
+// never polled — so a genuinely-unresumable state simply waits for the next
+// signal instead of spinning. Guarded against the mid-swap `pause()` in playAt.
+function resumeIfInterrupted() {
+  if (userPaused || switching || cursor < 0 || !audio.src || audio.ended || !audio.paused) return;
+  audio.play().catch(() => {});
 }
 
 // The bar shows one reaction control, rebuilt when the current track changes.
@@ -247,6 +325,10 @@ function buildFullscreen() {
             <div class="scrub"><input type="range" id="pf-scrub" min="0" max="1000" value="0" step="1"></div>
             <span class="time" id="pf-tot">0:00</span>
           </div>
+          <div class="pf-volrow">
+            <button class="icon" id="pf-mute" title="Couper le son" aria-label="Couper le son">🔊</button>
+            <input type="range" id="pf-vol" class="vol" min="0" max="100" value="100" step="1" aria-label="Volume">
+          </div>
         </section>
         <section class="pf-screen pf-screen-2">
           <div class="pf-meta" id="pf-meta"></div>
@@ -275,6 +357,8 @@ function buildFullscreen() {
   pfScrub.addEventListener('input', () => {
     if (audio.duration) audio.currentTime = (pfScrub.value / 1000) * audio.duration;
   });
+  fsEl.querySelector('#pf-vol').addEventListener('input', (e) => setVolume(Number(e.target.value)));
+  fsEl.querySelector('#pf-mute').addEventListener('click', toggleMute);
   // Cover tap → jump to the compilation (and close), mirroring the bar cover.
   fsEl.querySelector('#pf-cover').addEventListener('click', () => {
     const t = queue[cursor];
@@ -323,6 +407,7 @@ function openFullscreen() {
     audio.duration || 0,
   );
   setPlayIcon(audio.paused ? '▶' : '⏸');
+  syncVolumeUI();
 }
 
 function closeFullscreen() {
@@ -402,6 +487,7 @@ export function playQueue(tracks, opts = {}) {
 
 export async function playAt(idx) {
   if (idx < 0 || idx >= queue.length) { stop(); return; }
+  switching = true; // suppress auto-resume while we swap the outgoing track out
   cursor = idx;
   const t = queue[cursor];
   // Stop the outgoing track now. Otherwise it keeps playing audibly while we
@@ -427,7 +513,7 @@ export async function playAt(idx) {
     // but keep the bar on this track (don't tear the player down).
     console.warn('Morceau indisponible, passage au suivant :', t.title, err?.code || err);
     skippedInARow += 1;
-    if (skippedInARow >= queue.length) { skippedInARow = 0; return; }
+    if (skippedInARow >= queue.length) { skippedInARow = 0; switching = false; return; }
     // Wrap with modulo so skipping never runs off the end into stop().
     return playAt((idx + 1) % queue.length);
   }
@@ -440,6 +526,8 @@ export async function playAt(idx) {
     // Expected, non-fatal: NotAllowedError (autoplay blocked, stay paused) and
     // AbortError (this play() was superseded by a quick pause()/next track).
     if (err?.name !== 'NotAllowedError' && err?.name !== 'AbortError') console.error('playback failed', err);
+  } finally {
+    switching = false;
   }
   updateMediaSession();
   persist();
@@ -447,6 +535,8 @@ export async function playAt(idx) {
 }
 
 export function stop() {
+  switching = false;
+  userPaused = false;
   audio.pause();
   audio.removeAttribute('src');
   closeFullscreen();
@@ -513,10 +603,36 @@ async function restoreSession() {
 // ---- MediaSession (OS-level media keys) ----
 function setupMediaSession() {
   if (!('mediaSession' in navigator)) return;
-  navigator.mediaSession.setActionHandler('play', () => audio.play().catch(() => {}));
-  navigator.mediaSession.setActionHandler('pause', () => audio.pause());
-  navigator.mediaSession.setActionHandler('previoustrack', () => playAt(cursor - 1));
-  navigator.mediaSession.setActionHandler('nexttrack', () => playAt(cursor + 1));
+  const set = (action, handler) => {
+    // Not every browser supports every action; unsupported ones throw.
+    try { navigator.mediaSession.setActionHandler(action, handler); } catch (_) { /* unsupported */ }
+  };
+  // `play` doubles as the resume signal after a call: clearing userPaused lets
+  // the auto-resume paths take over again.
+  set('play', () => { userPaused = false; audio.play().catch(() => {}); });
+  set('pause', () => { userPaused = true; audio.pause(); });
+  set('previoustrack', () => playAt(cursor - 1));
+  set('nexttrack', () => playAt(cursor + 1));
+  set('stop', () => stop());
+  set('seekto', (d) => { if (d.seekTime != null && isFinite(d.seekTime)) audio.currentTime = d.seekTime; });
+}
+function setPlaybackState(state) {
+  if (!('mediaSession' in navigator)) return;
+  try { navigator.mediaSession.playbackState = state; } catch (_) { /* ignore */ }
+}
+// Keep the OS lock-screen scrubber in sync (and the session marked "live" so
+// it survives an interruption and can be resumed from the lock screen).
+function updatePositionState() {
+  if (!('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return;
+  const d = audio.duration;
+  if (!isFinite(d) || d <= 0) return;
+  try {
+    navigator.mediaSession.setPositionState({
+      duration: d,
+      playbackRate: audio.playbackRate || 1,
+      position: Math.min(audio.currentTime, d),
+    });
+  } catch (_) { /* ignore out-of-range during seeks */ }
 }
 async function updateMediaSession() {
   if (!('mediaSession' in navigator)) return;

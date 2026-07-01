@@ -551,7 +551,7 @@ h3 { font-size: 24px; letter-spacing: 0.04em; }
   border-top: 1px solid var(--line);
   padding: 10px 24px;
   display: grid;
-  grid-template-columns: 280px 1fr 200px;
+  grid-template-columns: 280px 1fr auto;
   gap: 24px;
   align-items: center;
   z-index: 100;
@@ -580,7 +580,10 @@ body.has-player { padding-bottom: 100px; }
 .player-bar .now .t { font-family: var(--display); font-size: 18px; letter-spacing: 0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .player-bar .now .a { color: var(--ink-dim); font-size: 12px; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .player-bar .now .src { color: var(--ink-faint); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
-.player-bar .controls { display: flex; align-items: center; gap: 12px; }
+/* Transport + scrub stay centered in their column; the scrub is capped so it
+   no longer stretches edge-to-edge on wide screens (leaves the bar breathing
+   room for the reaction + volume cluster on the right). */
+.player-bar .controls { display: flex; align-items: center; gap: 12px; justify-content: center; }
 .player-bar button.icon {
   background: transparent;
   color: var(--ink);
@@ -588,12 +591,18 @@ body.has-player { padding-bottom: 100px; }
   font-size: 18px;
 }
 .player-bar button.icon:hover { color: var(--accent); background: transparent; }
-.player-bar .scrub { flex: 1; }
+.player-bar .scrub { flex: 1; max-width: 440px; }
 .player-bar .scrub input[type=range] {
   width: 100%; padding: 0; height: 4px;
 }
+.player-bar input[type=range] { accent-color: var(--accent); }
 .player-bar .time { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-faint); }
-.player-bar .pb-right { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.player-bar .pb-right { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+/* Thin divider grouping the song's reactions apart from the player utilities. */
+.player-bar .pb-sep { width: 1px; align-self: stretch; margin: 4px 0; background: var(--line); }
+.player-bar .pb-volume { display: flex; align-items: center; gap: 6px; }
+.player-bar .pb-volume input[type=range] { width: 84px; height: 4px; padding: 0; cursor: pointer; }
+.player-bar #pb-mute { padding: 4px 6px; font-size: 16px; }
 .player-bar .react { font-size: 20px; padding: 4px 6px; transition: transform 80ms ease, filter 120ms ease; filter: grayscale(0.4) opacity(0.6); }
 .player-bar .react:hover { filter: none; transform: scale(1.1); }
 .player-bar .react.active { filter: none; }
@@ -821,6 +830,17 @@ body.pf-open { overflow: hidden; }
 .player-full .pf-scrubrow .scrub { flex: 1; }
 .player-full .pf-scrubrow .scrub input[type=range] { width: 100%; padding: 0; height: 4px; }
 .player-full .pf-scrubrow .time { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-faint); }
+.player-full .pf-volrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 260px;
+  margin-top: 16px;
+}
+.player-full .pf-volrow input[type=range] { flex: 1; height: 4px; padding: 0; cursor: pointer; }
+.player-full .pf-volrow #pf-mute { font-size: 20px; padding: 4px 6px; }
+.player-full input[type=range] { accent-color: var(--accent); }
 
 /* screen 2 — metadata */
 .player-full .pf-meta { width: 100%; max-width: 520px; }
@@ -1295,10 +1315,15 @@ body.pf-open { overflow: hidden; }
     gap: 8px;
     align-items: center;
   }
-  .player-bar .scrub { width: 100%; }
+  .player-bar .scrub { width: 100%; max-width: none; }
   .player-bar .time { display: none; }
   .player-bar #pb-stop { display: none; }
-  .player-bar .pb-right { justify-content: flex-start; }
+  /* Reactions on the left, volume + expand pushed to the right edge. The
+     divider is desktop-only. */
+  .player-bar .pb-right { justify-content: flex-start; gap: 8px; }
+  .player-bar .pb-sep { display: none; }
+  .player-bar .pb-volume { margin-left: auto; }
+  .player-bar .pb-volume input[type=range] { width: 96px; }
   /* Control sits at the left edge now, so the palette must open rightward
      to stay on screen (mirrors the right-anchored desktop placement). */
   .player-bar .rx-palette,
