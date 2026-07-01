@@ -244,6 +244,28 @@ export async function loadAllowlist() {
   snap.forEach((d) => allowlistByEmail.set(d.id.toLowerCase(), { email: d.id, ...d.data() }));
 }
 
+// Admin-only: people who signed in but aren't allowlisted yet, pending an
+// admin's approve/deny on the Membres screen. Rules block non-admin reads.
+const accessRequestsByEmail = new Map();
+export async function loadAccessRequests() {
+  const snap = await getDocs(collection(db, 'accessRequests'));
+  accessRequestsByEmail.clear();
+  snap.forEach((d) => accessRequestsByEmail.set(d.id.toLowerCase(), { email: d.id, ...d.data() }));
+}
+
+// Pending access requests, most-recently-attempted first.
+export function allAccessRequests() {
+  return [...accessRequestsByEmail.values()].sort(
+    (a, b) => (b.requestedAt?.toMillis?.() || 0) - (a.requestedAt?.toMillis?.() || 0),
+  );
+}
+
+// Drop a request from the in-memory cache after approve/deny so the list
+// refreshes without a re-fetch.
+export function removeAccessRequestLocal(email) {
+  accessRequestsByEmail.delete((email || '').toLowerCase());
+}
+
 // Union of /users and /allowlist keyed by lowercased email. /users wins on
 // displayName conflicts. Each entry: { email, displayName, avatarPath, linked }.
 // `linked` is true when the user has signed in at least once (has a /users doc).

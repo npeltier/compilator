@@ -7,7 +7,7 @@
 // /allowlist). We cache the result per session so views can call isAdmin()
 // synchronously after the initial async resolution.
 
-import { auth, db } from './firebase-init.js';
+import { auth, db, functions } from './firebase-init.js';
 import {
   onAuthStateChanged,
   signOut,
@@ -16,6 +16,9 @@ import {
   doc,
   getDoc,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
+import {
+  httpsCallable,
+} from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-functions.js';
 
 let adminCache = null; // { email: string, isAdmin: bool } — single-session cache
 
@@ -32,6 +35,18 @@ export async function isAllowlisted(email) {
   if (!email) return false;
   const snap = await getDoc(doc(db, 'allowlist', email.toLowerCase()));
   return snap.exists();
+}
+
+// Record the current (signed-in but not-allowlisted) user as a pending access
+// request so an admin can approve or deny them from the Membres screen. The
+// server callable reads the caller's email from the auth token. Best-effort —
+// never throws into the caller, since we sign the user out immediately after.
+export async function recordAccessRequest() {
+  try {
+    await httpsCallable(functions, 'requestAccess')();
+  } catch (err) {
+    console.warn('requestAccess failed', err);
+  }
 }
 
 // Async check against /admins/{email}. Result cached for the session.
@@ -59,6 +74,7 @@ export async function requireAuth({ redirectTo = '/login.html' } = {}) {
   }
   const ok = await isAllowlisted(user.email);
   if (!ok) {
+    await recordAccessRequest();
     await signOut(auth);
     location.replace(`${redirectTo}?error=not_allowlisted`);
     return new Promise(() => {});

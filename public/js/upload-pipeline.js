@@ -21,6 +21,8 @@ const deleteCompilationFn = httpsCallable(functions, 'deleteCompilation');
 const recomputeDurationsFn = httpsCallable(functions, 'recomputeDurations');
 const upsertUserFn = httpsCallable(functions, 'upsertUser');
 const removeUserFn = httpsCallable(functions, 'removeUser');
+const approveAccessRequestFn = httpsCallable(functions, 'approveAccessRequest');
+const denyAccessRequestFn = httpsCallable(functions, 'denyAccessRequest');
 
 function uuid() {
   return crypto.randomUUID ? crypto.randomUUID()
@@ -145,6 +147,25 @@ export async function upsertUser({ email, displayName }) {
  */
 export async function removeUser(email) {
   const { data } = await removeUserFn({ email });
+  return data;
+}
+
+/**
+ * Admin-only. Approves a pending access request: adds the email to /allowlist
+ * and deletes the /accessRequests entry. Optional displayName seeds /users.
+ */
+export async function approveAccessRequest({ email, displayName }) {
+  const { data } = await approveAccessRequestFn({ email, displayName });
+  return data;
+}
+
+/**
+ * Admin-only. Denies a pending access request: deletes the /accessRequests
+ * entry, the /users doc and the (self-created) Firebase Auth account. The email
+ * is not allowlisted.
+ */
+export async function denyAccessRequest(email) {
+  const { data } = await denyAccessRequestFn({ email });
   return data;
 }
 

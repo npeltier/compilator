@@ -40,7 +40,7 @@
 
   <script type="module">
     import { auth } from '/js/firebase-init.js';
-    import { isAllowlisted } from '/js/auth-guard.js';
+    import { isAllowlisted, recordAccessRequest } from '/js/auth-guard.js';
     import {
       signInWithEmailAndPassword,
       createUserWithEmailAndPassword,
@@ -69,7 +69,7 @@
 
     const params = new URLSearchParams(location.search);
     if (params.get('error') === 'not_allowlisted') {
-      showError("Votre compte n'est pas autorisé sur ce site. Demandez à Nicolas d'ajouter votre adresse e-mail.");
+      showError("Votre compte n'est pas autorisé sur ce site. Votre demande a été transmise à Nicolas — il pourra vous autoriser.");
     }
 
     onAuthStateChanged(auth, async (user) => {
@@ -78,8 +78,9 @@
         const next = params.get('next') || '/';
         location.replace(next);
       } else {
+        await recordAccessRequest();
         await signOut(auth);
-        showError("Cette adresse n'est pas autorisée. Demandez à Nicolas de l'ajouter.");
+        showError("Cette adresse n'est pas autorisée. Ta demande a été transmise à Nicolas — il pourra t'autoriser.");
         submit.disabled = false;
       }
     });
@@ -149,8 +150,9 @@
         } else {
           await createUserWithEmailAndPassword(auth, email, password);
           if (!(await isAllowlisted(email))) {
+            await recordAccessRequest();
             await signOut(auth);
-            throw new Error("Cette adresse n'est pas autorisée. Demandez à Nicolas de l'ajouter.");
+            throw new Error("Cette adresse n'est pas autorisée. Ta demande a été transmise à Nicolas — il pourra t'autoriser.");
           }
           await setDoc(doc(db, 'users', email), {
             displayName: email.split('@')[0],

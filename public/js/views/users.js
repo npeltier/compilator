@@ -9,13 +9,21 @@ import { auth } from '../firebase-init.js';
 import { sendPasswordResetEmail } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js';
 import { requireAdmin } from '../auth-guard.js';
 import {
+  allAccessRequests,
   allAuthorOptions,
   displayNameFor,
+  loadAccessRequests,
   loadAllowlist,
   loadCatalog,
+  removeAccessRequestLocal,
   updateUserLocal,
 } from '../catalog.js';
-import { removeUser, upsertUser } from '../upload-pipeline.js';
+import {
+  approveAccessRequest,
+  denyAccessRequest,
+  removeUser,
+  upsertUser,
+} from '../upload-pipeline.js';
 import { avatarHTML, paintAvatars } from '../avatar.js';
 
 function escape(s) {
@@ -35,6 +43,16 @@ export async function mount(el) {
 
       <div id="error" class="error" hidden></div>
       <div id="ok" class="notice" hidden></div>
+
+      <section class="section" id="requestsSection" hidden>
+        <h3>Demandes d'accès <span id="requestCount" class="eyebrow" style="float:right"></span></h3>
+        <p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 16px;">
+          Ces personnes ont essayé de se connecter mais ne sont pas encore autorisées.
+          <strong>Approuver</strong> les ajoute à la liste d'autorisation ; <strong>Refuser</strong>
+          supprime la demande et leur compte.
+        </p>
+        <ul id="requestList" class="user-admin-list"></ul>
+      </section>
 
       <section class="section">
         <h3>Ajouter quelqu'un</h3>
@@ -71,6 +89,68 @@ export async function mount(el) {
     errEl.hidden = true; okEl.hidden = true;
     node.textContent = msg;
     node.hidden = false;
+  }
+
+  function renderRequests() {
+    const section = el.querySelector('#requestsSection');
+    const list = el.querySelector('#requestList');
+    const countEl = el.querySelector('#requestCount');
+    const requests = allAccessRequests();
+    section.hidden = requests.length === 0;
+    countEl.textContent = `${requests.length} en attente`;
+    list.innerHTML = '';
+    requests.forEach((r) => {
+      const li = document.createElement('li');
+      li.className = 'user-admin-row';
+      const name = (r.displayName || '').trim();
+      li.innerHTML = `
+        ${avatarHTML(r.email, { size: 'sm' })}
+        <div class="ua-meta">
+          <div class="ua-name">${name ? escape(name) : escape(r.email.split('@')[0])} <span class="ua-tag">demande</span></div>
+          <div class="ua-email">${escape(r.email)}</div>
+        </div>
+        <div class="ua-actions">
+          <button class="btn-accent ua-approve" type="button">Approuver</button>
+          <button class="btn-ghost danger ua-deny" type="button">Refuser</button>
+        </div>
+      `;
+      li.querySelector('.ua-approve').addEventListener('click', () => approve(r, li));
+      li.querySelector('.ua-deny').addEventListener('click', () => deny(r, li));
+      list.appendChild(li);
+    });
+    paintAvatars(list);
+  }
+
+  async function approve(r, li) {
+    const btns = li.querySelectorAll('button');
+    btns.forEach((b) => (b.disabled = true));
+    try {
+      await approveAccessRequest({ email: r.email, displayName: r.displayName || '' });
+      removeAccessRequestLocal(r.email);
+      // Refresh the allowlist so the newly approved member shows in "Membres".
+      await loadAllowlist();
+      flash(okEl, `${r.email} approuvé et ajouté aux membres.`);
+      renderRequests();
+      renderList();
+    } catch (err) {
+      btns.forEach((b) => (b.disabled = false));
+      flash(errEl, `Échec : ${err.message || err}`);
+    }
+  }
+
+  async function deny(r, li) {
+    if (!confirm(`Refuser ${r.email} ?\n(La demande et son compte sont supprimés.)`)) return;
+    const btns = li.querySelectorAll('button');
+    btns.forEach((b) => (b.disabled = true));
+    try {
+      await denyAccessRequest(r.email);
+      removeAccessRequestLocal(r.email);
+      flash(okEl, `${r.email} refusé.`);
+      renderRequests();
+    } catch (err) {
+      btns.forEach((b) => (b.disabled = false));
+      flash(errEl, `Échec : ${err.message || err}`);
+    }
   }
 
   function renderList() {
@@ -166,4 +246,9 @@ export async function mount(el) {
     await Promise.all([loadCatalog(), loadAllowlist().catch(() => {})]);
   }
   renderList();
+
+  // Access requests are admin-only and not part of the boot payload — fetch
+  // them here, then render (or leave the section hidden if there are none).
+  await loadAccessRequests().catch(() => {});
+  renderRequests();
 }

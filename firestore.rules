@@ -53,6 +53,14 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Access requests: signed-in-but-not-allowlisted users who tried to get in.
+    // Written only by the requestAccess / approve / deny callables via the Admin
+    // SDK (bypassing rules). Admins list them on the Membres screen.
+    match /accessRequests/{email} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // User profiles: doc id is the user's lowercased email — same id strategy
     // as /allowlist and /admins. Each user owns their own doc.
     match /users/{email} {

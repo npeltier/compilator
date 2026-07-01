@@ -153,6 +153,47 @@ export const deleteCompilation = onCall({ memory: '512MiB', timeoutSeconds: 300 
 });
 
 /**
+ * Core "add someone to the allowlist" logic, shared by upsertUser (admin adds a
+ * member by hand) and approveAccessRequest (admin approves a pending request).
+ *
+ * Writes /allowlist/{key}, optionally seeds /users/{key} with a displayName, and
+ * — if the email has no Firebase Auth account yet — creates one with a random
+ * temporary password so the person can sign in via the password-reset flow.
+ * Returns whether a new Auth account was created.
+ */
+async function addToAllowlist({ key, displayName, addedBy }) {
+  const db = admin.firestore();
+  await db.collection('allowlist').doc(key).set({
+    email: key,
+    addedBy,
+    addedAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
+  if (displayName) {
+    await db.collection('users').doc(key).set({
+      displayName,
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+
+  const auth = admin.auth();
+  let authCreated = false;
+  try {
+    await auth.getUserByEmail(key);
+  } catch (err) {
+    if (err.code !== 'auth/user-not-found') throw err;
+    const tempPassword = `tmp-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+    await auth.createUser({
+      email: key,
+      password: tempPassword,
+      emailVerified: false,
+      ...(displayName ? { displayName } : {}),
+    });
+    authCreated = true;
+  }
+  return authCreated;
+}
+
+/**
  * upsertUser({ email, displayName? })
  *
  * Admin-only. Creates /allowlist/{email}, optionally seeds /users/{email}
@@ -175,41 +216,95 @@ export const upsertUser = onCall({ memory: '256MiB', timeoutSeconds: 30 }, async
   }
   const key = email.toLowerCase().trim();
   const trimmed = (displayName || '').trim();
-  const db = admin.firestore();
 
-  // Allowlist + optional display name.
-  await db.collection('allowlist').doc(key).set({
-    email: key,
-    addedBy: callerEmail,
-    addedAt: FieldValue.serverTimestamp(),
-  }, { merge: true });
-  if (trimmed) {
-    await db.collection('users').doc(key).set({
-      displayName: trimmed,
-      updatedAt: FieldValue.serverTimestamp(),
-    }, { merge: true });
-  }
-
-  // Make sure a Firebase Auth account exists for this email so the person can
-  // actually sign in. If we just created it, the caller (frontend) will follow
-  // up with sendPasswordResetEmail() so the new member gets an invite email.
-  const auth = admin.auth();
-  let authCreated = false;
-  try {
-    await auth.getUserByEmail(key);
-  } catch (err) {
-    if (err.code !== 'auth/user-not-found') throw err;
-    const tempPassword = `tmp-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
-    await auth.createUser({
-      email: key,
-      password: tempPassword,
-      emailVerified: false,
-      ...(trimmed ? { displayName: trimmed } : {}),
-    });
-    authCreated = true;
-  }
+  const authCreated = await addToAllowlist({ key, displayName: trimmed, addedBy: callerEmail });
 
   return { email: key, displayName: trimmed || null, authCreated };
+});
+
+/**
+ * requestAccess()
+ *
+ * Called by the login flow when a signed-in user turns out NOT to be on the
+ * allowlist (self sign-up or first-time sign-in with an unknown email). Records
+ * the attempt in /accessRequests/{email} so an admin can approve or deny it from
+ * the Membres screen. Requires authentication but deliberately NOT allowlist
+ * membership — that's the whole point. No-op (but not an error) if the caller is
+ * actually already allowlisted.
+ */
+export const requestAccess = onCall({ memory: '256MiB', timeoutSeconds: 30 }, async (req) => {
+  const auth = req.auth;
+  if (!auth || !auth.uid) {
+    throw new HttpsError('unauthenticated', 'Sign in required.');
+  }
+  const email = (auth.token?.email || '').toLowerCase().trim();
+  if (!email) {
+    throw new HttpsError('permission-denied', 'Email missing from token.');
+  }
+  const db = admin.firestore();
+  const allow = await db.collection('allowlist').doc(email).get();
+  if (allow.exists) {
+    return { email, alreadyAllowlisted: true };
+  }
+  await db.collection('accessRequests').doc(email).set({
+    email,
+    displayName: auth.token?.name || null,
+    requestedAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
+  return { email, recorded: true };
+});
+
+/**
+ * approveAccessRequest({ email, displayName? })
+ *
+ * Admin-only. Approves a pending /accessRequests entry: adds the email to the
+ * allowlist (creating an Auth account if somehow missing) and removes the
+ * request. The person already has an Auth account from their sign-up, so this
+ * lets them straight in on their next visit.
+ */
+export const approveAccessRequest = onCall({ memory: '256MiB', timeoutSeconds: 30 }, async (req) => {
+  const { email: callerEmail } = await requireAllowlistedCaller(req.auth);
+  if (!(await isAdminEmail(callerEmail))) {
+    throw new HttpsError('permission-denied', 'Admin only.');
+  }
+  const { email, displayName } = req.data || {};
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    throw new HttpsError('invalid-argument', 'A valid email is required.');
+  }
+  const key = email.toLowerCase().trim();
+  const trimmed = (displayName || '').trim();
+
+  const authCreated = await addToAllowlist({ key, displayName: trimmed, addedBy: callerEmail });
+  await admin.firestore().collection('accessRequests').doc(key).delete();
+
+  return { email: key, displayName: trimmed || null, authCreated };
+});
+
+/**
+ * denyAccessRequest({ email })
+ *
+ * Admin-only. Denies a pending /accessRequests entry: removes the request, the
+ * (self-created) Firebase Auth account, and any /users profile doc. The email is
+ * NOT added to the allowlist, so the person stays locked out.
+ */
+export const denyAccessRequest = onCall({ memory: '256MiB', timeoutSeconds: 30 }, async (req) => {
+  const { email: callerEmail } = await requireAllowlistedCaller(req.auth);
+  if (!(await isAdminEmail(callerEmail))) {
+    throw new HttpsError('permission-denied', 'Admin only.');
+  }
+  const { email } = req.data || {};
+  if (!email) throw new HttpsError('invalid-argument', 'email is required.');
+  const key = email.toLowerCase().trim();
+  const db = admin.firestore();
+  await db.collection('accessRequests').doc(key).delete();
+  await db.collection('users').doc(key).delete().catch(() => {});
+  try {
+    const u = await admin.auth().getUserByEmail(key);
+    await admin.auth().deleteUser(u.uid);
+  } catch (err) {
+    if (err.code !== 'auth/user-not-found') console.warn('deleteUser failed', err);
+  }
+  return { email: key };
 });
 
 /**
