@@ -14,6 +14,7 @@ import { strict as assert } from 'node:assert';
 import admin from 'firebase-admin';
 import { chromium } from 'playwright';
 import { buildMp3 } from './fixtures.mjs';
+import { nextCompilationSlot } from '../../public/js/slot.js';
 
 process.env.FIRESTORE_EMULATOR_HOST ||= '127.0.0.1:8080';
 const PROJECT = process.env.GCLOUD_PROJECT || 'demo-compilator';
@@ -27,15 +28,10 @@ const ok = (m) => console.log(`  ✓ ${m}`);
 admin.initializeApp({ projectId: PROJECT });
 const db = admin.firestore();
 
-// Slot logic mirrors public/js/slot.js so we can target & clean the author's
-// current-season compilation regardless of when the test runs.
-function currentSlot(now = new Date()) {
-  const y = now.getFullYear();
-  if (now < new Date(y, 6, 1)) return { season: 'ete', year: y };
-  if (now < new Date(y, 11, 21)) return { season: 'noel', year: y };
-  return { season: 'ete', year: y + 1 };
-}
-const slot = currentSlot();
+// Reuse the app's own slot logic (public/js/slot.js) so the test always targets &
+// cleans the same author/season compilation the upload view creates, regardless of
+// when the test runs — no hand-maintained copy to drift out of sync.
+const slot = nextCompilationSlot();
 
 async function removeMine() {
   const snap = await db.collection('compilations')
