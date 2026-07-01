@@ -8,6 +8,7 @@ import { auth, db } from '../firebase-init.js';
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   increment,
   orderBy,
@@ -33,7 +34,14 @@ import {
   removeCompilationLocal,
 } from '../catalog.js';
 import { isAdminSync } from '../auth-guard.js';
-import { deleteCompilation, replaceSongBinary, uploadCover, recomputeDurations } from '../upload-pipeline.js';
+import {
+  deleteCompilation,
+  replaceSongBinary,
+  runWithConcurrency,
+  uploadCover,
+  uploadSong,
+  recomputeDurations,
+} from '../upload-pipeline.js';
 import { navigate } from '../router.js';
 import { avatarHTML, paintAvatars } from '../avatar.js';
 
@@ -256,6 +264,9 @@ export async function mount(el, { params }) {
         </div>
       </div>
       <div id="edError" class="error" hidden></div>
+      <div class="actions" style="margin:8px 0;">
+        <button class="btn-ghost" id="addTrackBtn">➕ Ajouter un morceau</button>
+      </div>
       <ol class="tracklist edit" id="edTracks"></ol>
     `;
     paintHeroCover();
@@ -277,6 +288,124 @@ export async function mount(el, { params }) {
     main.querySelector('#saveEdit').addEventListener('click', () => saveEdit());
     main.querySelector('#deleteCompBtn').addEventListener('click', () => deleteCurrentCompilation());
     main.querySelector('#changeCoverBtn').addEventListener('click', () => triggerCoverChange());
+    main.querySelector('#addTrackBtn').addEventListener('click', () => triggerAddTracks());
+  }
+
+  // Number of uploads still in flight. While > 0 we disable Save/Cancel so the
+  // user can't tear down editState out from under a running upload task.
+  let addUploads = 0;
+  function setAddBusy(delta) {
+    addUploads += delta;
+    const busy = addUploads > 0;
+    const addBtn = main.querySelector('#addTrackBtn');
+    const saveBtn = main.querySelector('#saveEdit');
+    const cancelBtn = main.querySelector('#cancelEdit');
+    if (addBtn) { addBtn.disabled = busy; addBtn.textContent = busy ? 'Ajout en cours…' : '➕ Ajouter un morceau'; }
+    if (saveBtn) saveBtn.disabled = busy;
+    if (cancelBtn) cancelBtn.disabled = busy;
+  }
+
+  // Open a file picker and append the chosen audio files as new tracks. Each
+  // file goes through the same uploadSong → processSong pipeline as the initial
+  // upload; the created song doc is appended at the end of the tracklist. Adds
+  // are persisted immediately (like the 🔄 replace button), then finalized on
+  // Save alongside any reordering/renaming.
+  function triggerAddTracks() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'audio/mpeg,audio/mp4,audio/flac,audio/aiff,audio/wav,audio/ogg,.mp3,.m4a,.flac,.aiff,.aif,.wav,.ogg';
+    input.multiple = true;
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    input.addEventListener('change', () => {
+      const files = [...(input.files || [])];
+      input.remove();
+      if (files.length) addTrackFiles(files);
+    });
+    input.click();
+  }
+
+  async function addTrackFiles(files) {
+    const list = main.querySelector('#edTracks');
+    // Insert a pending placeholder row per file so the user sees progress.
+    const pending = files.map((file) => {
+      const row = {
+        songId: null,
+        order: 0,
+        title: file.name.replace(/\.[^.]+$/, ''),
+        artist: '',
+        duration: 0,
+        deleted: false,
+        uploading: true,
+        progress: 0,
+      };
+      editState.rows.push(row);
+      return { file, row };
+    });
+    renderEditRows(list);
+    setAddBusy(+1);
+
+    const tasks = pending.map(({ file, row }) => async () => {
+      // Append at the end of the currently-live rows.
+      const order = editState.rows.filter((r) => !r.deleted).indexOf(row);
+      try {
+        const result = await uploadSong({
+          file,
+          compilationId: id,
+          order,
+          onProgress: (p) => { row.progress = p; updateRowProgress(row); },
+        });
+        row.songId = result.songId;
+        row.title = result.title || row.title;
+        row.artist = result.artist || '';
+        row.duration = result.duration || 0;
+        row.order = order;
+        row.uploading = false;
+
+        // Pull the full song doc so the new track is immediately playable
+        // (needs storagePath) after Save without reloading the page.
+        const snap = await getDoc(doc(db, 'compilations', id, 'songs', result.songId));
+        const s = snap.exists() ? snap.data() : {};
+        songs.push({
+          songId: result.songId,
+          order,
+          title: row.title || 'Sans titre',
+          artist: row.artist,
+          duration: row.duration,
+          storagePath: s.storagePath,
+          compilationId: comp.id,
+          compilationTitle: comp.title,
+          coverPath: comp.coverPath || null,
+          doublons: s.doublons || null,
+          year: s.year || null,
+          label: s.label || null,
+          artistBio: s.artistBio || null,
+          artistCountry: s.artistCountry || null,
+          artistTown: s.artistTown || null,
+          discogsUrl: s.discogs?.releaseUrl || null,
+        });
+      } catch (err) {
+        const idx = editState.rows.indexOf(row);
+        if (idx >= 0) editState.rows.splice(idx, 1);
+        showEditError(`Échec de l'ajout de « ${file.name} » : ${err.message || err}`);
+      }
+    });
+
+    await runWithConcurrency(tasks, 3);
+
+    // processSong already bumped the compilation's counters server-side; mirror
+    // that into the shared in-memory catalog object so listings stay in sync.
+    comp.trackCount = songs.length;
+    comp.totalDuration = recomputeTotal();
+
+    setAddBusy(-1);
+    renderEditRows(list);
+    updateStats();
+  }
+
+  function updateRowProgress(row) {
+    const fill = row._li?.querySelector('.ed-progress span');
+    if (fill) fill.style.width = `${Math.round((row.progress || 0) * 100)}%`;
   }
 
   function triggerCoverChange() {
@@ -321,23 +450,29 @@ export async function mount(el, { params }) {
     list.innerHTML = '';
     editState.rows.forEach((r, i) => {
       const li = document.createElement('li');
-      li.draggable = true;
+      li.draggable = !r.uploading;
       li.dataset.idx = i;
-      li.className = r.deleted ? 'deleted' : '';
+      li.className = [r.deleted ? 'deleted' : '', r.uploading ? 'uploading' : ''].filter(Boolean).join(' ');
       li.innerHTML = `
         <span class="grip" title="Glisser pour réordonner">⋮⋮</span>
         <div class="ed-fields">
-          <input class="ed-title" placeholder="Titre" value="${escape(r.title)}">
-          <input class="ed-artist" placeholder="Artiste" value="${escape(r.artist)}">
+          <input class="ed-title" placeholder="Titre" value="${escape(r.title)}" ${r.uploading ? 'disabled' : ''}>
+          <input class="ed-artist" placeholder="Artiste" value="${escape(r.artist)}" ${r.uploading ? 'disabled' : ''}>
         </div>
         <div class="ed-actions">
+          ${r.uploading ? '' : `
           <button class="ed-replace" title="Remplacer l'audio" aria-label="Remplacer l'audio">🔄</button>
           <button class="ed-delete" title="Supprimer" aria-label="Supprimer">🗑</button>
-          ${r.deleted ? '<a href="#" class="ed-undo">annuler</a>' : ''}
+          ${r.deleted ? '<a href="#" class="ed-undo">annuler</a>' : ''}`}
         </div>
-        <span class="dur">${fmt(r.duration)}</span>
-        <div class="ed-progress" hidden><span></span></div>
+        <span class="dur">${r.uploading ? '…' : fmt(r.duration)}</span>
+        <div class="ed-progress" ${r.uploading ? '' : 'hidden'}><span style="width:${Math.round((r.progress || 0) * 100)}%"></span></div>
       `;
+      r._li = li;
+
+      // Pending upload rows have no editable controls until they land.
+      if (r.uploading) { list.appendChild(li); return; }
+
       li.querySelector('.ed-title').addEventListener('input', (e) => { r.title = e.target.value; });
       li.querySelector('.ed-artist').addEventListener('input', (e) => { r.artist = e.target.value; });
       li.querySelector('.ed-delete').addEventListener('click', () => {
@@ -461,8 +596,10 @@ export async function mount(el, { params }) {
         });
       }
 
-      // Compute new order for the surviving rows.
-      const surviving = editState.rows.filter((r) => !r.deleted);
+      // Compute new order for the surviving rows. (A row always has a songId
+      // here — added tracks are persisted before Save, and Save is disabled
+      // while any upload is still in flight — but guard defensively.)
+      const surviving = editState.rows.filter((r) => !r.deleted && r.songId);
       let deletedDurationTotal = 0;
       let deletedCount = 0;
 

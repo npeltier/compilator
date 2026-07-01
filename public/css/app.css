@@ -633,6 +633,8 @@ body.has-player { padding-bottom: 100px; }
 .tracklist.edit li.deleted { opacity: 0.45; }
 .tracklist.edit li.deleted .ed-fields input { text-decoration: line-through; }
 .tracklist.edit li.dragging { opacity: 0.4; }
+.tracklist.edit li.uploading { opacity: 0.7; }
+.tracklist.edit li.uploading .grip { visibility: hidden; }
 .tracklist.edit .grip { color: var(--ink-faint); cursor: grab; font-size: 14px; }
 .tracklist.edit .ed-fields { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; min-width: 0; }
 .tracklist.edit .ed-fields input {
