@@ -79,24 +79,33 @@ export async function mount(el, { query }) {
   const banner = el.querySelector('#nextBanner');
   const slotTxt = slotLabel(slot);
   const deadTxt = deadlineLabel(slot);
+  const late = slot.phase === 'catchup';
   if (!mine) {
+    const sub = late
+      ? `Pas encore de compil pour ${slotTxt} — mais il n'est pas trop tard.`
+      : `À rendre avant le ${deadTxt} — tu n'as encore rien envoyé.`;
     banner.innerHTML = `
-      <section class="next-banner todo">
+      <section class="next-banner todo${late ? ' late' : ''}">
         <div class="text">
-          <p class="eyebrow">Prochaine compil</p>
+          <p class="eyebrow">${late ? 'Rattrapage' : 'Prochaine compil'}</p>
           <div class="head">${slotTxt}</div>
-          <div class="sub">À rendre avant le ${deadTxt} — tu n'as encore rien envoyé.</div>
+          <div class="sub">${sub}</div>
         </div>
         <a class="cta" href="/upload">Commencer</a>
       </section>
     `;
   } else if (mine.status !== 'published') {
+    const n = mine.trackCount || 0;
+    const tracks = `${n} morceau${n > 1 ? 'x' : ''} déjà déposé${n > 1 ? 's' : ''}`;
+    const sub = late
+      ? `${tracks} · publie-la, il n'est pas trop tard.`
+      : `${tracks} · à rendre avant le ${deadTxt}.`;
     banner.innerHTML = `
-      <section class="next-banner wip">
+      <section class="next-banner wip${late ? ' late' : ''}">
         <div class="text">
-          <p class="eyebrow">Prochaine compil — en cours</p>
+          <p class="eyebrow">${late ? 'Rattrapage — en cours' : 'Prochaine compil — en cours'}</p>
           <div class="head">${escape(mine.title || slotTxt)}</div>
-          <div class="sub">${mine.trackCount || 0} morceau${(mine.trackCount || 0) > 1 ? 'x' : ''} déjà déposés · à rendre avant le ${deadTxt}.</div>
+          <div class="sub">${sub}</div>
         </div>
         <a class="cta" href="/upload">Reprendre</a>
       </section>

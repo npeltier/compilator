@@ -84,7 +84,9 @@ export async function mount(el) {
 
   el.innerHTML = `
     <div class="shell-narrow">
-      <p class="eyebrow">Prochaine compil — ${slotLabel(slot)} · à rendre avant le ${deadlineLabel(slot)}</p>
+      <p class="eyebrow">${slot.phase === 'catchup'
+        ? `Rattrapage — ${slotLabel(slot)} · il n'est pas trop tard`
+        : `Prochaine compil — ${slotLabel(slot)} · à rendre avant le ${deadlineLabel(slot)}`}</p>
       <h1>Fais ton disque.</h1>
       ${compId ? '<p class="notice">Brouillon en cours — ajoute des morceaux, enregistre, et publie quand tu es prêt.</p>' : ''}
 

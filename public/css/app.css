@@ -297,6 +297,13 @@ h3 { font-size: 24px; letter-spacing: 0.04em; }
   50%      { box-shadow: 0 0 0 12px rgba(230, 86, 46, 0); }
 }
 
+/* Catch-up — deadline passed but still open; warm nudge, no urgent pulse */
+.next-banner.late .eyebrow { color: var(--accent); }
+.next-banner.todo.late {
+  background: linear-gradient(135deg, rgba(230, 86, 46, 0.12), rgba(230, 86, 46, 0.04));
+}
+.next-banner.todo.late a.cta { animation: none; }
+
 /* Work in progress — softer, info-only */
 .next-banner.wip {
   background: var(--bg-elev);
