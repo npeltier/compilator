@@ -140,6 +140,7 @@ ensureSongsLoaded(); // warm in background; not awaited — shuffle buttons awai
 ensureCommunityReactionsLoaded(); // warm aggregate reactions in background too
 
 register('/', () => import('./views/home.js'));
+register('/map', () => import('./views/map.js'));
 register('/c/:id', () => import('./views/compilation.js'));
 register('/upload', () => import('./views/upload.js'));
 register('/profile', () => import('./views/profile.js'));

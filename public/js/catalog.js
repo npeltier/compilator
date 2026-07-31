@@ -171,6 +171,39 @@ export function visibleCompilations() {
 export function visibleSongs() {
   return allSongs().filter((s) => isCompVisible(compilationsById.get(s.compilationId)));
 }
+// Aggregate visible songs by artist country (ISO-3166-1 alpha-2) for the world
+// map. `authors` (optional array of emails) restricts to those authors'
+// compilations. Songs whose artist MusicBrainz couldn't place land in `unknown`.
+// Returns { byCountry: Map<code, { count, songs, byAuthor: Map<email, n> }>,
+//           unknown, total }.
+export function songsByCountry({ authors = null } = {}) {
+  const authorSet = authors?.length ? new Set(authors.map((e) => e.toLowerCase())) : null;
+  const byCountry = new Map();
+  let unknown = 0;
+  let total = 0;
+  for (const s of visibleSongs()) {
+    const author = compilationsById.get(s.compilationId)?.author || '';
+    if (authorSet && !authorSet.has(author.toLowerCase())) continue;
+    total += 1;
+    const code = s.artistCountryCode || null;
+    if (!code) { unknown += 1; continue; }
+    let e = byCountry.get(code);
+    if (!e) { e = { count: 0, songs: [], byAuthor: new Map() }; byCountry.set(code, e); }
+    e.count += 1;
+    e.songs.push(s);
+    e.byAuthor.set(author, (e.byAuthor.get(author) || 0) + 1);
+  }
+  return { byCountry, unknown, total };
+}
+
+// Distinct authors among visible compilations, sorted by display name — powers
+// the map's author filter.
+export function visibleAuthors() {
+  const emails = new Set();
+  for (const c of visibleCompilations()) if (c.author) emails.add(c.author);
+  return [...emails].sort((a, b) => displayNameFor(a).localeCompare(displayNameFor(b), 'fr'));
+}
+
 export function getUser(email) {
   return email ? usersByEmail.get(email.toLowerCase()) || null : null;
 }
