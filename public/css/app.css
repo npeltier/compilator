@@ -603,6 +603,9 @@ body.has-player { padding-bottom: 100px; }
 .player-bar .pb-volume { display: flex; align-items: center; gap: 6px; }
 .player-bar .pb-volume input[type=range] { width: 84px; height: 4px; padding: 0; cursor: pointer; }
 .player-bar #pb-mute { padding: 4px 6px; font-size: 16px; }
+/* Cast button: hidden until a receiver is on the network; tinted while connected. */
+.player-bar #pb-cast { padding: 4px 6px; font-size: 16px; }
+.player-bar #pb-cast.active { color: var(--accent); }
 .player-bar .react { font-size: 20px; padding: 4px 6px; transition: transform 80ms ease, filter 120ms ease; filter: grayscale(0.4) opacity(0.6); }
 .player-bar .react:hover { filter: none; transform: scale(1.1); }
 .player-bar .react.active { filter: none; }
@@ -1311,13 +1314,20 @@ body.pf-open { overflow: hidden; }
   .player-bar .now .t { font-size: 15px; }
   .player-bar .now .a { font-size: 11px; }
   .player-bar .now .src { display: none; }
+  /* Transport buttons span the full phone width on their own row; the scrub
+     bar drops below them. Big, evenly-split tap targets (back / play / fwd). */
   .player-bar .controls {
     display: grid;
-    grid-template-columns: auto auto auto 1fr;
+    grid-template-columns: 1fr 1fr 1fr;
     gap: 8px;
     align-items: center;
   }
-  .player-bar .scrub { width: 100%; max-width: none; }
+  .player-bar .controls button.icon {
+    width: 100%;
+    min-height: 44px;
+    font-size: 22px;
+  }
+  .player-bar .scrub { grid-column: 1 / -1; width: 100%; max-width: none; }
   .player-bar .time { display: none; }
   .player-bar #pb-stop { display: none; }
   /* Reactions on the left, volume + expand pushed to the right edge. The
@@ -1393,5 +1403,44 @@ body.pf-open { overflow: hidden; }
   .profile-hero { flex-direction: column; align-items: flex-start; gap: 16px; }
   .avatar-xl { width: 100px; height: 100px; font-size: 44px; line-height: 100px; }
   .profile-hero h1 { font-size: 40px; }
+}
+
+/* ---- boot overlay ---- */
+/* Covers the viewport while the shell loads; on failure it swaps to a
+   retryable error with a copy-pasteable report string. */
+.boot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+.boot-box { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; padding: 24px; max-width: 420px; }
+.boot-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: boot-spin 0.8s linear infinite;
+}
+@keyframes boot-spin { to { transform: rotate(360deg); } }
+.boot-msg { color: var(--ink-dim); font-size: 14px; letter-spacing: 0.04em; }
+.boot-msg--error { color: var(--ink); font-family: var(--display); font-size: 22px; }
+.boot-sub { color: var(--ink-dim); font-size: 14px; margin: 0; }
+.boot-report {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-faint);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 100%;
+  user-select: all;
 }
 

@@ -93,6 +93,7 @@ export async function mount(el, { params }) {
       label: s.label || null,
       artistBio: s.artistBio || null,
       artistCountry: s.artistCountry || null,
+      artistRegion: s.artistRegion || null,
       artistTown: s.artistTown || null,
       discogsUrl: s.discogs?.releaseUrl || null,
     };

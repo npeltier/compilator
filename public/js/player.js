@@ -22,19 +22,39 @@ import { coverUrl } from './image-url.js';
 import { navigate } from './router.js';
 import { ensureSongsLoaded, getSong } from './catalog.js';
 import { doublonChipsHTML, enrichFactsHTML, paintDoublonCovers } from './track-meta.js';
+import {
+  initCast, isCasting, requestCastSession, castTrack, castPlayPause, castSeek,
+} from './cast.js';
 
 const SESSION_KEY = 'compilator.player.v1';
 const VOLUME_KEY = 'compilator.volume.v1'; // persists across sessions (localStorage)
 
+// Detect iOS / iPadOS (incl. iPadOS 13+ which masquerades as "Macintosh" but
+// has touch). We deliberately avoid Web Audio there — see ensureGraph.
+function isIOS() {
+  const ua = navigator.userAgent || '';
+  return /iP(hone|od|ad)/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+}
+
 const audio = new Audio();
 audio.preload = 'metadata';
-// Restore the last chosen volume before anything plays. Note: iOS Safari treats
-// `audio.volume` as read-only (hardware buttons own it) — the stored level is a
-// no-op there, but `muted` still works, so mute survives everywhere.
+// Needed so Web Audio can read the decoded samples (loudness normalization) for
+// cross-origin sources — Firebase download URLs are CORS-enabled by default.
+// Skipped on iOS, where we don't run the graph and blob playback is same-origin.
+if (!isIOS()) audio.crossOrigin = 'anonymous';
+
+// Volume state. On iOS Safari `audio.volume` is a hardware-owned no-op, so the
+// slider does nothing there today; once the Web Audio graph is up we drive
+// volume through its masterGain instead (which iOS *does* honour) — see below.
+// Persisted across sessions in localStorage.
+let volLevel = 1;
+let volMuted = false;
 try {
   const v = JSON.parse(localStorage.getItem(VOLUME_KEY) || 'null');
-  if (v && typeof v.volume === 'number') { audio.volume = v.volume; audio.muted = !!v.muted; }
+  if (v && typeof v.volume === 'number') { volLevel = v.volume; volMuted = !!v.muted; }
 } catch (_) { /* ignore corrupt value */ }
+audio.volume = volLevel;
+audio.muted = volMuted;
 
 let queue = [];
 let cursor = -1;
@@ -55,18 +75,229 @@ async function resolveAudioUrl(storagePath) {
   return url;
 }
 
-// Kick off URL resolution for the next few tracks in the queue so their src is
-// ready to swap synchronously on `ended`. Critical on mobile: when the screen
-// locks and the page goes to background, network fetches inside the `ended`
-// handler are throttled / deferred, which would otherwise stall the queue.
-// We look ahead a few tracks so auto-advance can chain across several songs
-// even if no subsequent prefetch ever lands while backgrounded.
+// Pre-buffer the next few tracks' actual *bytes* (not just their URLs) into
+// in-memory blobs. This is the promise of "never off network": by the time the
+// current song ends, the next one is already fully downloaded, so auto-advance
+// plays through a dead zone (subway, elevator, tunnel) with zero fetch.
+// Critical on mobile too: when the screen locks and the page backgrounds,
+// network fetches are throttled/deferred — a pre-fetched blob sidesteps that.
 const PREFETCH_LOOKAHEAD = 3;
+const audioBlobCache = new Map(); // storagePath → object URL backed by in-memory bytes
+const blobInFlight = new Map();   // storagePath → Promise (dedupe concurrent fetches)
+
+async function prefetchBlob(storagePath) {
+  if (!storagePath) return null;
+  if (audioBlobCache.has(storagePath)) return audioBlobCache.get(storagePath);
+  if (blobInFlight.has(storagePath)) return blobInFlight.get(storagePath);
+  const p = (async () => {
+    const url = await resolveAudioUrl(storagePath);
+    if (!url) return null;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`fetch ${resp.status}`);
+    const objUrl = URL.createObjectURL(await resp.blob());
+    audioBlobCache.set(storagePath, objUrl);
+    return objUrl;
+  })()
+    .catch((err) => { console.warn('prefetch blob failed', storagePath, err?.message || err); return null; })
+    .finally(() => blobInFlight.delete(storagePath));
+  blobInFlight.set(storagePath, p);
+  return p;
+}
+
+// Release blobs outside the current look-ahead window so memory stays bounded
+// to ~(LOOKAHEAD+1) songs. Never touches the currently-playing track (i === 0).
+function evictFarBlobs() {
+  const keep = new Set();
+  for (let i = 0; i <= PREFETCH_LOOKAHEAD; i++) {
+    const t = queue[cursor + i];
+    if (t?.storagePath) keep.add(t.storagePath);
+  }
+  for (const [path, objUrl] of audioBlobCache) {
+    if (!keep.has(path)) { URL.revokeObjectURL(objUrl); audioBlobCache.delete(path); }
+  }
+}
+
+function releaseAllBlobs() {
+  for (const objUrl of audioBlobCache.values()) URL.revokeObjectURL(objUrl);
+  audioBlobCache.clear();
+}
+
 function prefetchAhead() {
   for (let i = 1; i <= PREFETCH_LOOKAHEAD; i++) {
     const t = queue[cursor + i];
-    if (t?.storagePath) resolveAudioUrl(t.storagePath).catch(() => {});
+    if (t?.storagePath) prefetchBlob(t.storagePath);
   }
+  evictFarBlobs();
+}
+
+// ---- Web Audio graph (loudness normalization + iOS-capable volume) ----
+// Routing every track through gain nodes lets us (a) normalize per-track
+// loudness so the level doesn't jump between songs, and (b) control volume on
+// iOS, where `audio.volume` is a hardware-owned no-op but graph gain still works.
+//   mediaElementSource → trackGain (per-song) → masterGain (user volume) → out
+// The graph is best-effort: if Web Audio is unavailable or set-up throws, we
+// fall back to the element's own volume and skip normalization.
+const TARGET_LUFS = -14;  // reference level each track is nudged toward
+const MAX_GAIN_DB = 12;   // clamp so a very quiet track isn't blown up (or vice-versa)
+let audioCtx = null;
+let trackGain = null;
+let masterGain = null;
+let graphState = 'idle';  // 'idle' | 'ready' | 'failed'
+const clientLufsCache = new Map(); // storagePath → estimated LUFS (client fallback)
+
+function ensureGraph() {
+  if (graphState !== 'idle') return graphState === 'ready';
+  // Stay on the safe side on iOS: routing the <audio> element through an
+  // AudioContext can let iOS suspend playback when the screen locks / the app
+  // backgrounds, which would break the lock-screen playback the player relies
+  // on. Fall back to element volume there — no normalization, and the volume
+  // slider stays a hardware no-op, exactly as before this feature.
+  if (isIOS()) { graphState = 'failed'; return false; }
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) { graphState = 'failed'; return false; }
+    audioCtx = new Ctx();
+    const source = audioCtx.createMediaElementSource(audio);
+    trackGain = audioCtx.createGain();
+    masterGain = audioCtx.createGain();
+    source.connect(trackGain).connect(masterGain).connect(audioCtx.destination);
+    graphState = 'ready';
+    applyVolume(); // push the restored level onto masterGain
+    return true;
+  } catch (err) {
+    console.warn('Web Audio unavailable; falling back to element volume', err);
+    graphState = 'failed';
+    return false;
+  }
+}
+
+// AudioContexts start suspended and can be suspended again when backgrounded;
+// resume only succeeds from (or shortly after) a user gesture.
+function resumeCtx() {
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+}
+
+function lufsToGain(lufs) {
+  if (lufs == null || !isFinite(lufs)) return 1;
+  const db = Math.max(-MAX_GAIN_DB, Math.min(MAX_GAIN_DB, TARGET_LUFS - lufs));
+  return Math.pow(10, db / 20);
+}
+
+// Ramp the current track's normalization gain (a short ramp avoids an audible
+// click as one song hands off to the next).
+function setTrackGain(linear) {
+  if (graphState !== 'ready' || !trackGain) return;
+  const now = audioCtx.currentTime;
+  trackGain.gain.cancelScheduledValues(now);
+  trackGain.gain.setTargetAtTime(linear, now, 0.15);
+}
+
+// Client-side fallback loudness: decode the audio and derive an RMS-based level
+// (a rough LUFS proxy) when the server never measured the track. Cached per path.
+async function estimateLufsFromUrl(storagePath, url) {
+  if (clientLufsCache.has(storagePath)) return clientLufsCache.get(storagePath);
+  if (graphState !== 'ready') return null;
+  try {
+    const arr = await (await fetch(url)).arrayBuffer();
+    const decoded = await audioCtx.decodeAudioData(arr);
+    const data = decoded.getChannelData(0);
+    const step = Math.max(1, Math.floor(data.length / 500000)); // subsample for speed
+    let sum = 0; let n = 0;
+    for (let i = 0; i < data.length; i += step) { sum += data[i] * data[i]; n += 1; }
+    const rms = Math.sqrt(sum / Math.max(1, n));
+    const dbfs = 20 * Math.log10(rms || 1e-6);
+    clientLufsCache.set(storagePath, dbfs);
+    return dbfs;
+  } catch (err) {
+    console.warn('client loudness estimate failed', err?.message || err);
+    return null;
+  }
+}
+
+// Set the current track's gain: stored server LUFS first, client estimate as a
+// late-arriving fallback. Guarded so a slow estimate can't gain-stage the wrong
+// (already-advanced) track.
+async function applyNormalization(track, url) {
+  if (graphState !== 'ready') return;
+  const stored = getSong(track.songId)?.loudnessLufs;
+  if (stored != null) { setTrackGain(lufsToGain(stored)); return; }
+  setTrackGain(1); // neutral until an estimate lands
+  const est = await estimateLufsFromUrl(track.storagePath, url);
+  if (est != null && queue[cursor]?.storagePath === track.storagePath) setTrackGain(lufsToGain(est));
+}
+
+// ---- Chromecast integration ----
+// While a receiver is connected, transport targets the remote device and the
+// local element stays paused; the remote's time + end-of-track are mirrored
+// back into the bar/fullscreen UI.
+let lastRemoteTime = 0;
+let lastRemoteDuration = 0;
+
+// Single play/pause entry point so the bar, the overlay, the spacebar and the
+// OS media keys all share one path (and the cast branch lives in one place).
+function togglePlayPause() {
+  if (isCasting()) { castPlayPause(); return; }
+  if (audio.paused) { userPaused = false; ensureGraph(); resumeCtx(); audio.play().catch(() => {}); }
+  else { userPaused = true; audio.pause(); }
+}
+
+function updateCastButton(state) {
+  const btn = bar?.querySelector('#pb-cast');
+  if (!btn) return;
+  btn.hidden = !state || state === 'unavailable';
+  btn.classList.toggle('active', state === 'connected');
+}
+
+// Load whatever the player is on onto the receiver, preserving position. The
+// receiver fetches the audio itself, so it needs the public download URL.
+async function castCurrent(position = 0) {
+  const t = queue[cursor];
+  if (!t) return;
+  let url;
+  try { url = await resolveAudioUrl(t.storagePath); } catch (_) { return; }
+  if (!url) return;
+  const cover = t.coverPath ? await coverUrl(t.coverPath) : null;
+  await castTrack({
+    url, title: t.title, artist: t.artist,
+    album: t.compilationTitle || sourceLabel, coverUrl: cover, currentTime: position,
+  });
+  setPlayIcon('⏸');
+}
+
+function onCastConnect() {
+  const pos = audio.currentTime || 0;
+  audio.pause(); // silence local; the receiver takes over
+  updateCastButton('connected');
+  if (cursor >= 0) castCurrent(pos);
+}
+
+async function onCastDisconnect() {
+  updateCastButton('available');
+  const t = queue[cursor];
+  if (!t) return;
+  let url;
+  try { url = audioBlobCache.get(t.storagePath) || await resolveAudioUrl(t.storagePath); } catch (_) { return; }
+  if (!url) return;
+  // Resume locally where the receiver left off.
+  audio.src = url;
+  ensureGraph();
+  resumeCtx();
+  applyNormalization(t, url);
+  try { audio.currentTime = lastRemoteTime || 0; } catch (_) { /* ignore */ }
+  if (!userPaused) audio.play().catch(() => {});
+}
+
+function onCastTime(cur, dur) {
+  if (!isCasting()) return;
+  lastRemoteTime = cur || 0;
+  lastRemoteDuration = dur || 0;
+  const d = dur || 0;
+  const pos = d ? Math.round((cur / d) * 1000) : 0;
+  const barScrub = bar?.querySelector('#pb-scrub');
+  if (barScrub && document.activeElement !== barScrub) barScrub.value = pos;
+  const curEl = bar?.querySelector('#pb-cur'); if (curEl) curEl.textContent = fmt(cur);
+  const totEl = bar?.querySelector('#pb-tot'); if (totEl) totEl.textContent = fmt(d);
+  syncFullscreenTime(pos, cur, d);
 }
 
 function fmt(s) {
@@ -114,6 +345,7 @@ export function initPlayer() {
         <button class="icon" id="pb-mute" title="Couper le son" aria-label="Couper le son">🔊</button>
         <input type="range" id="pb-vol" class="vol" min="0" max="100" value="100" step="1" aria-label="Volume">
       </div>
+      <button class="icon" id="pb-cast" title="Diffuser (Chromecast)" aria-label="Diffuser" hidden>📺</button>
       <button class="icon" id="pb-expand" title="Plein écran" aria-label="Plein écran">⤢</button>
       <button class="btn-ghost" id="pb-stop">Arrêter</button>
     </div>
@@ -121,13 +353,11 @@ export function initPlayer() {
   document.body.appendChild(bar);
   buildFullscreen();
 
-  bar.querySelector('#pb-play').addEventListener('click', () => {
-    if (audio.paused) { userPaused = false; audio.play().catch(() => {}); }
-    else { userPaused = true; audio.pause(); }
-  });
+  bar.querySelector('#pb-play').addEventListener('click', togglePlayPause);
   bar.querySelector('#pb-prev').addEventListener('click', () => playAt(cursor - 1));
   bar.querySelector('#pb-next').addEventListener('click', () => playAt(cursor + 1));
   bar.querySelector('#pb-stop').addEventListener('click', stop);
+  bar.querySelector('#pb-cast').addEventListener('click', () => requestCastSession().catch(() => {}));
   bar.querySelector('#pb-expand').addEventListener('click', openFullscreen);
   bar.querySelector('#pb-cover').addEventListener('click', () => {
     const t = queue[cursor];
@@ -135,6 +365,7 @@ export function initPlayer() {
   });
   const scrub = bar.querySelector('#pb-scrub');
   scrub.addEventListener('input', () => {
+    if (isCasting()) { if (lastRemoteDuration) castSeek((scrub.value / 1000) * lastRemoteDuration); return; }
     if (audio.duration) audio.currentTime = (scrub.value / 1000) * audio.duration;
   });
   bar.querySelector('#pb-vol').addEventListener('input', (e) => setVolume(Number(e.target.value)));
@@ -164,37 +395,62 @@ export function initPlayer() {
   audio.addEventListener('stalled', () => { if (!userPaused && !switching) audio.play().catch(() => {}); });
   // Resume once the interruption clears: the app regains focus / visibility
   // when the user returns from a call, or the OS sends a media-key `play`.
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeIfInterrupted(); });
-  window.addEventListener('focus', resumeIfInterrupted);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { resumeCtx(); resumeIfInterrupted(); } });
+  window.addEventListener('focus', () => { resumeCtx(); resumeIfInterrupted(); });
   audio.addEventListener('ended', () => playAt(cursor + 1));
+
+  // Build + resume the Web Audio graph on the first user interaction (browsers
+  // only let an AudioContext start from a gesture). Cheap to re-run: ensureGraph
+  // is a no-op once set up, resumeCtx a no-op while running.
+  const kickstart = () => { ensureGraph(); resumeCtx(); };
+  document.addEventListener('pointerdown', kickstart);
+  document.addEventListener('keydown', kickstart);
 
   document.addEventListener('keydown', (e) => {
     if (e.code === 'Escape' && fsOpen) { closeFullscreen(); return; }
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
     if (e.code === 'Space') {
       e.preventDefault();
-      if (audio.paused) { userPaused = false; audio.play().catch(() => {}); }
-      else { userPaused = true; audio.pause(); }
+      togglePlayPause();
     }
   });
 
+  initCast({
+    onState: updateCastButton,
+    onConnect: onCastConnect,
+    onDisconnect: onCastDisconnect,
+    onTime: onCastTime,
+    onPlayPause: (playing) => setPlayIcon(playing ? '⏸' : '▶'),
+    onEnded: () => playAt(cursor + 1),
+  });
   setupMediaSession();
   syncVolumeUI();
   restoreSession();
 }
 
 // ---- volume ----
-// Level lives on the shared `audio` element; two UIs (bar + fullscreen) mirror
-// it. `muted` is kept independent of the slider position so un-muting returns
-// to the previous level (and so a mute survives on iOS, where level is fixed).
+// `volLevel`/`volMuted` are the source of truth; two UIs (bar + fullscreen)
+// mirror them. `muted` is independent of the slider so un-muting returns to the
+// previous level. Applied through the graph's masterGain when it's up (works on
+// iOS), otherwise through the element's own volume/muted.
+function applyVolume() {
+  if (graphState === 'ready' && masterGain) {
+    masterGain.gain.value = volMuted ? 0 : volLevel;
+    audio.volume = 1;      // graph owns the level now — keep the element neutral
+    audio.muted = false;
+  } else {
+    audio.volume = volLevel;
+    audio.muted = volMuted;
+  }
+}
 function volGlyph() {
-  if (audio.muted || audio.volume === 0) return '🔇';
-  if (audio.volume < 0.34) return '🔈';
-  if (audio.volume < 0.67) return '🔉';
+  if (volMuted || volLevel === 0) return '🔇';
+  if (volLevel < 0.34) return '🔈';
+  if (volLevel < 0.67) return '🔉';
   return '🔊';
 }
 function syncVolumeUI() {
-  const pct = Math.round(audio.volume * 100);
+  const pct = Math.round(volLevel * 100);
   for (const id of ['pb-vol', 'pf-vol']) {
     const el = document.getElementById(id);
     if (el && document.activeElement !== el) el.value = pct;
@@ -205,18 +461,20 @@ function syncVolumeUI() {
   }
 }
 function setVolume(pct) {
-  audio.volume = Math.max(0, Math.min(1, pct / 100));
-  if (audio.volume > 0 && audio.muted) audio.muted = false; // dragging up un-mutes
+  volLevel = Math.max(0, Math.min(1, pct / 100));
+  if (volLevel > 0 && volMuted) volMuted = false; // dragging up un-mutes
+  applyVolume();
   saveVolume();
   syncVolumeUI();
 }
 function toggleMute() {
-  audio.muted = !audio.muted;
+  volMuted = !volMuted;
+  applyVolume();
   saveVolume();
   syncVolumeUI();
 }
 function saveVolume() {
-  try { localStorage.setItem(VOLUME_KEY, JSON.stringify({ volume: audio.volume, muted: audio.muted })); } catch (_) { /* ignore */ }
+  try { localStorage.setItem(VOLUME_KEY, JSON.stringify({ volume: volLevel, muted: volMuted })); } catch (_) { /* ignore */ }
 }
 
 // ---- interruption recovery ----
@@ -347,14 +605,12 @@ function buildFullscreen() {
   fsEl.querySelector('#pf-next-screen').addEventListener('click', () => goScreen(fsScreen + 1));
   fsEl.querySelectorAll('.pf-dot').forEach((d) => d.addEventListener('click', () => goScreen(Number(d.dataset.screen))));
 
-  fsEl.querySelector('#pf-play').addEventListener('click', () => {
-    if (audio.paused) { userPaused = false; audio.play().catch(() => {}); }
-    else { userPaused = true; audio.pause(); }
-  });
+  fsEl.querySelector('#pf-play').addEventListener('click', togglePlayPause);
   fsEl.querySelector('#pf-prev').addEventListener('click', () => playAt(cursor - 1));
   fsEl.querySelector('#pf-next').addEventListener('click', () => playAt(cursor + 1));
   const pfScrub = fsEl.querySelector('#pf-scrub');
   pfScrub.addEventListener('input', () => {
+    if (isCasting()) { if (lastRemoteDuration) castSeek((pfScrub.value / 1000) * lastRemoteDuration); return; }
     if (audio.duration) audio.currentTime = (pfScrub.value / 1000) * audio.duration;
   });
   fsEl.querySelector('#pf-vol').addEventListener('input', (e) => setVolume(Number(e.target.value)));
@@ -465,6 +721,7 @@ async function updateFullscreen() {
     year: song.year,
     label: song.label,
     artistTown: song.artistTown,
+    artistRegion: song.artistRegion,
     artistCountry: song.artistCountry,
     artistBio: song.artistBio,
     discogsUrl: song.discogs?.releaseUrl || null,
@@ -504,9 +761,15 @@ export async function playAt(idx) {
   updateFullscreen();
   queue.forEach((q, i) => q.li?.classList.toggle('playing', i === cursor));
 
+  const casting = isCasting();
   let url;
   try {
-    url = await resolveAudioUrl(t.storagePath);
+    // Casting: the receiver fetches the audio itself, so it needs the public
+    // download URL (a blob: URL is local-only). Otherwise prefer the pre-buffered
+    // blob (instant start, works with no network) and fall back to streaming.
+    url = casting
+      ? await resolveAudioUrl(t.storagePath)
+      : (audioBlobCache.get(t.storagePath) || await resolveAudioUrl(t.storagePath));
   } catch (err) {
     // The binary is missing/unreadable — skip to the next track rather than
     // leaving the player stuck. If the WHOLE queue is unavailable, stop trying
@@ -519,15 +782,30 @@ export async function playAt(idx) {
   }
   skippedInARow = 0;
 
-  audio.src = url;
-  try {
-    await audio.play();
-  } catch (err) {
-    // Expected, non-fatal: NotAllowedError (autoplay blocked, stay paused) and
-    // AbortError (this play() was superseded by a quick pause()/next track).
-    if (err?.name !== 'NotAllowedError' && err?.name !== 'AbortError') console.error('playback failed', err);
-  } finally {
+  if (casting) {
+    // Hand off to the receiver; keep the local element silent.
+    const cover = t.coverPath ? await coverUrl(t.coverPath) : null;
+    await castTrack({
+      url, title: t.title, artist: t.artist,
+      album: t.compilationTitle || sourceLabel, coverUrl: cover, currentTime: 0,
+    });
+    setPlayIcon('⏸');
+    setPlaybackState('playing');
     switching = false;
+  } else {
+    audio.src = url;
+    ensureGraph();
+    resumeCtx();
+    applyNormalization(t, url); // set per-track gain (not awaited — ramps in)
+    try {
+      await audio.play();
+    } catch (err) {
+      // Expected, non-fatal: NotAllowedError (autoplay blocked, stay paused) and
+      // AbortError (this play() was superseded by a quick pause()/next track).
+      if (err?.name !== 'NotAllowedError' && err?.name !== 'AbortError') console.error('playback failed', err);
+    } finally {
+      switching = false;
+    }
   }
   updateMediaSession();
   persist();
@@ -539,6 +817,7 @@ export function stop() {
   userPaused = false;
   audio.pause();
   audio.removeAttribute('src');
+  releaseAllBlobs();
   closeFullscreen();
   if (bar) bar.hidden = true;
   document.body.classList.remove('has-player');
@@ -609,7 +888,7 @@ function setupMediaSession() {
   };
   // `play` doubles as the resume signal after a call: clearing userPaused lets
   // the auto-resume paths take over again.
-  set('play', () => { userPaused = false; audio.play().catch(() => {}); });
+  set('play', () => { userPaused = false; resumeCtx(); audio.play().catch(() => {}); });
   set('pause', () => { userPaused = true; audio.pause(); });
   set('previoustrack', () => playAt(cursor - 1));
   set('nexttrack', () => playAt(cursor + 1));

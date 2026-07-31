@@ -23,20 +23,85 @@ import { register, start } from './router.js';
   console.info(`Compilator build ${commit} · ${time}`);
 }
 
-const user = await requireAuth();
+// ---- boot overlay ----
+// Keeps the user off a blank page while the shell fetches its critical data,
+// and turns a failed boot (dead network, Firestore hiccup) into a spinner →
+// retry → reportable message instead of a silent black screen.
+const boot = document.createElement('div');
+boot.className = 'boot-overlay';
+boot.setAttribute('role', 'status');
+boot.setAttribute('aria-live', 'polite');
+document.body.appendChild(boot);
 
-// Boot data — block first render until the catalog and reactions are available.
-// All views read from these caches and assume they're populated.
-await Promise.all([
-  loadCatalog(),
-  loadReactions(user.email),
-  loadLikedCompilations(user.email),
-  loadSavedFilters(user.email),
-  // Allowlist is admin-readable only; non-admins skip the fetch (rules would
-  // reject it anyway). Used to populate "assign author" dropdowns with users
-  // who haven't signed in yet.
-  isAdminSync(user.email) ? loadAllowlist().catch(() => {}) : null,
-]);
+function bootLoading(msg = 'Chargement…') {
+  boot.className = 'boot-overlay';
+  boot.innerHTML = `<div class="boot-box"><div class="boot-spinner" aria-hidden="true"></div><div class="boot-msg"></div></div>`;
+  boot.querySelector('.boot-msg').textContent = msg;
+}
+function bootDone() { boot.remove(); }
+function bootError(err) {
+  // A short, copy-pasteable summary the user can report back to me.
+  const report = `Compilator boot error — ${err?.code || err?.name || 'unknown'}: ${err?.message || err}`;
+  boot.className = 'boot-overlay boot-overlay--error';
+  boot.innerHTML = `
+    <div class="boot-box">
+      <div class="boot-msg boot-msg--error">Impossible de charger l'application.</div>
+      <p class="boot-sub">Vérifiez votre connexion, puis réessayez.</p>
+      <button class="btn" id="boot-retry">Réessayer</button>
+      <pre class="boot-report"></pre>
+    </div>`;
+  boot.querySelector('.boot-report').textContent = report;
+  boot.querySelector('#boot-retry').addEventListener('click', () => runBoot());
+}
+
+// Retry transient failures with linear backoff; surface progress in the overlay.
+async function withRetry(fn, { tries = 4, base = 600 } = {}) {
+  let lastErr;
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    try { return await fn(); } catch (err) {
+      lastErr = err;
+      console.warn(`boot step failed (attempt ${attempt}/${tries})`, err);
+      if (attempt < tries) {
+        bootLoading(`Connexion instable, nouvelle tentative… (${attempt}/${tries - 1})`);
+        await new Promise((r) => setTimeout(r, base * attempt));
+      }
+    }
+  }
+  throw lastErr;
+}
+
+let booted = false;
+async function runBoot() {
+  bootLoading();
+  let user;
+  try {
+    // requireAuth resolves to the user, or (on a redirect to /login) returns a
+    // promise that never settles — the page navigates away, so no retry fires.
+    user = await withRetry(() => requireAuth());
+
+    // Boot data — block first render until the catalog and reactions are
+    // available. All views read from these caches and assume they're populated.
+    await withRetry(() => Promise.all([
+      loadCatalog(),
+      loadReactions(user.email),
+      loadLikedCompilations(user.email),
+      loadSavedFilters(user.email),
+      // Allowlist is admin-readable only; non-admins skip the fetch (rules would
+      // reject it anyway). Used to populate "assign author" dropdowns with users
+      // who haven't signed in yet.
+      isAdminSync(user.email) ? loadAllowlist().catch(() => {}) : null,
+    ]));
+  } catch (err) {
+    bootError(err);
+    return;
+  }
+  bootDone();
+  if (booted) return; // a retry re-ran the data load; the shell is already wired
+  booted = true;
+  initShell(user);
+}
+
+function initShell(user) {
 
 // Tell the catalog who's viewing so it can hide other people's draft
 // compilations from listings / search / shuffle.
@@ -83,3 +148,7 @@ register('/users', () => import('./views/users.js'));
 register('/author/:name', () => import('./views/author.js'));
 
 start(document.getElementById('view'));
+
+}
+
+runBoot();

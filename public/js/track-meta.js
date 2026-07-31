@@ -66,7 +66,7 @@ export function enrichFactsHTML(t, { bio = 'toggle' } = {}) {
   const facts = [];
   if (t.year) facts.push(escape(String(t.year)));
   if (t.label) facts.push(escape(t.label));
-  const place = [t.artistTown, t.artistCountry].filter(Boolean).join(', ');
+  const place = [t.artistTown, t.artistRegion, t.artistCountry].filter(Boolean).join(', ');
   if (place) facts.push(escape(place));
 
   const link = t.discogsUrl

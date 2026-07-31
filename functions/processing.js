@@ -25,6 +25,12 @@ if (admin.apps.length === 0) {
 // `durationFixV`; the recompute re-checks anything below the current version.
 export const DURATION_FIX_VERSION = 1;
 
+// Bumped whenever the loudness-measurement pipeline changes. Songs carry their
+// version in `loudnessV`; the recompute re-measures anything below the current
+// version. `loudnessLufs` is the integrated loudness (LUFS) the client uses to
+// normalize playback gain across tracks.
+export const LOUDNESS_VERSION = 1;
+
 // Run ffmpeg from an input buffer to a *seekable temp file*, then return the
 // bytes. The output MUST be a real file, not a pipe: with a non-seekable stream
 // ffmpeg can't rewind to write the VBR/Xing header, which leaves the MP3 with a
@@ -41,6 +47,41 @@ async function ffmpegToTempMp3(inputBuf, configure) {
     return await readFile(out);
   } finally {
     await unlink(out).catch(() => {});
+  }
+}
+
+// Measure integrated loudness (LUFS) with ffmpeg's `loudnorm` filter in analysis
+// mode. A single pass prints a JSON block (input_i = integrated LUFS) to stderr;
+// we don't keep the transcoded output (null muxer). Returns the LUFS number, or
+// null on failure — callers treat null as "unknown" and the client falls back
+// to measuring the audio itself.
+async function measureLoudnessLufs(inputBuf) {
+  const sink = join(tmpdir(), `ln-${randomUUID()}.null`);
+  let stderr = '';
+  try {
+    await new Promise((resolve, reject) => {
+      ffmpeg(Readable.from(inputBuf))
+        .audioFilters('loudnorm=print_format=json')
+        .format('null')
+        .on('stderr', (line) => { stderr += `${line}\n`; })
+        .on('error', reject)
+        .on('end', resolve)
+        .save(sink);
+    });
+  } catch (err) {
+    console.warn('measureLoudnessLufs failed:', err?.message || err);
+    return null;
+  } finally {
+    await unlink(sink).catch(() => {});
+  }
+  // loudnorm emits one flat JSON object (no nested braces) among the log lines.
+  const m = stderr.match(/\{[^{}]*"input_i"[^{}]*\}/);
+  if (!m) return null;
+  try {
+    const lufs = parseFloat(JSON.parse(m[0]).input_i);
+    return Number.isFinite(lufs) ? lufs : null;
+  } catch {
+    return null;
   }
 }
 
@@ -81,7 +122,9 @@ async function resolveBinaryFromBuffer(buf) {
     });
   }
 
-  return { hash, storagePath, metadata, dedupHit: exists };
+  const loudnessLufs = await measureLoudnessLufs(buf);
+
+  return { hash, storagePath, metadata, dedupHit: exists, loudnessLufs };
 }
 
 /**
@@ -102,7 +145,7 @@ export async function processSongFromStaging({ tempPath, compilationId, order })
   const stagingFile = bucket.file(tempPath);
   const [stagingBuf] = await stagingFile.download();
 
-  const { hash, storagePath, metadata, dedupHit } = await resolveBinaryFromBuffer(stagingBuf);
+  const { hash, storagePath, metadata, dedupHit, loudnessLufs } = await resolveBinaryFromBuffer(stagingBuf);
   const { duration } = metadata.format || {};
   const { artist, year, title, track, picture } = metadata.common || {};
   const trackNo = track && typeof track.no === 'number' ? track.no : null;
@@ -120,6 +163,8 @@ export async function processSongFromStaging({ tempPath, compilationId, order })
     track: trackNo,
     duration: duration || null,
     durationFixV: DURATION_FIX_VERSION,
+    loudnessLufs: loudnessLufs ?? null,
+    loudnessV: LOUDNESS_VERSION,
     order,
     addedAt: FieldValue.serverTimestamp(),
   };
@@ -257,6 +302,59 @@ export async function recomputeDurationsFromStore({ compilationId, force = false
 }
 
 /**
+ * Measure integrated loudness (LUFS) for a compilation's songs and store it on
+ * each song doc (`loudnessLufs` + `loudnessV`). The client reads this to
+ * normalize playback gain so tracks don't jump in volume between songs.
+ *
+ * Idempotent: each song carries `loudnessV`, so this only pays the (expensive)
+ * download+measure until that matches the current version. Pass `force` to
+ * re-measure everything. Unlike durations it never rewrites the stored binary.
+ *
+ * @returns {Promise<{songCount, checked, updated, loudness}>}
+ */
+export async function recomputeLoudnessFromStore({ compilationId, force = false }) {
+  if (!compilationId) {
+    throw new Error('recomputeLoudnessFromStore: missing compilationId');
+  }
+  const bucket = getStorage().bucket();
+  const db = getFirestore();
+  const compRef = db.collection('compilations').doc(compilationId);
+  const songsSnap = await compRef.collection('songs').get();
+
+  let checked = 0;
+  let updated = 0;
+  const loudness = {}; // songId -> LUFS (or null), so the client can refresh
+  const writer = db.bulkWriter();
+
+  for (const d of songsSnap.docs) {
+    const s = d.data();
+    const needsCheck = (force || s.loudnessV !== LOUDNESS_VERSION) && s.storagePath;
+    if (needsCheck) {
+      checked += 1;
+      try {
+        const [buf] = await bucket.file(s.storagePath).download();
+        const lufs = await measureLoudnessLufs(buf);
+        writer.set(d.ref, {
+          loudnessLufs: lufs ?? null,
+          loudnessV: LOUDNESS_VERSION,
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+        if (lufs != null) updated += 1;
+        loudness[d.id] = lufs ?? null;
+      } catch (e) {
+        console.warn('recomputeLoudness: failed for song', d.id, e.message);
+        loudness[d.id] = s.loudnessLufs ?? null;
+      }
+    } else {
+      loudness[d.id] = s.loudnessLufs ?? null;
+    }
+  }
+
+  await writer.close();
+  return { songCount: songsSnap.size, checked, updated, loudness };
+}
+
+/**
  * Move a staged cover image to /covers/{compilationId}.{ext} and update the compilation.
  */
 export async function uploadCoverFromStaging({ tempPath, compilationId, ext }) {
@@ -318,7 +416,7 @@ export async function replaceSongFromStaging({ tempPath, compilationId, songId, 
 
   const stagingFile = bucket.file(tempPath);
   const [stagingBuf] = await stagingFile.download();
-  const { hash, storagePath, metadata, dedupHit } = await resolveBinaryFromBuffer(stagingBuf);
+  const { hash, storagePath, metadata, dedupHit, loudnessLufs } = await resolveBinaryFromBuffer(stagingBuf);
   const newDuration = metadata.format?.duration || 0;
 
   await songRef.set({
@@ -326,6 +424,8 @@ export async function replaceSongFromStaging({ tempPath, compilationId, songId, 
     storagePath,
     duration: newDuration,
     durationFixV: DURATION_FIX_VERSION,
+    loudnessLufs: loudnessLufs ?? null,
+    loudnessV: LOUDNESS_VERSION,
     updatedAt: FieldValue.serverTimestamp(),
   }, { merge: true });
 

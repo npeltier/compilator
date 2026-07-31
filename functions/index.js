@@ -7,10 +7,12 @@ import {
   deleteCompilationFully,
   processSongFromStaging,
   recomputeDurationsFromStore,
+  recomputeLoudnessFromStore,
   replaceSongFromStaging,
   uploadCoverFromStaging,
 } from './processing.js';
 import { enrichSong, isEnrichable, resolveToken } from './discogs.js';
+import { resolveArtistGeo, geoSongFields } from './geo.js';
 import { FieldValue } from 'firebase-admin/firestore';
 
 if (admin.apps.length === 0) {
@@ -127,6 +129,29 @@ export const recomputeDurations = onCall({ memory: '1GiB', timeoutSeconds: 300 }
   } catch (err) {
     console.error('recomputeDurations error', err);
     throw new HttpsError('internal', err.message || 'Failed to recompute durations.');
+  }
+});
+
+/**
+ * recomputeLoudness({ compilationId, force? })
+ *
+ * Measure integrated loudness (LUFS) for a compilation's songs so the client can
+ * normalize playback gain across tracks. Cheap after the first pass — each song
+ * is only re-downloaded until its `loudnessV` matches. Author or admin only.
+ */
+export const recomputeLoudness = onCall({ memory: '1GiB', timeoutSeconds: 300 }, async (req) => {
+  const { email } = await requireAllowlistedCaller(req.auth);
+  const { compilationId, force } = req.data || {};
+  if (!compilationId) {
+    throw new HttpsError('invalid-argument', 'compilationId is required.');
+  }
+  const comp = await loadCompilationOrThrow(compilationId);
+  await requireAuthorOrAdmin(comp, email);
+  try {
+    return await recomputeLoudnessFromStore({ compilationId, force: !!force });
+  } catch (err) {
+    console.error('recomputeLoudness error', err);
+    throw new HttpsError('internal', err.message || 'Failed to recompute loudness.');
   }
 });
 
@@ -383,27 +408,42 @@ export const enrichSongOnCreate = onDocumentCreated(
     const snap = event.data;
     if (!snap) return;
     const song = snap.data();
+    const db = admin.firestore();
 
     if (!isEnrichable(song.title, song.artist)) {
       await snap.ref.set({ enrichStatus: 'skipped', enrichedAt: FieldValue.serverTimestamp() }, { merge: true });
       return;
     }
 
-    const comp = await admin.firestore().collection('compilations').doc(event.params.compId).get().catch(() => null);
+    // Discogs enrichment (year/label/bio/link) needs a token; leave enrichStatus
+    // 'error' for the backfill to retry if none is available. Geo resolution
+    // below is independent of Discogs (MusicBrainz needs no token), so we always
+    // attempt it — with the Discogs bio-parsed location as a fallback.
+    const comp = await db.collection('compilations').doc(event.params.compId).get().catch(() => null);
     const token = comp?.exists ? await DISCOGS_TOKEN(comp.data().author) : null;
-    if (!token) {
-      // No token anywhere — leave it for the backfill script to retry later.
-      await snap.ref.set({ enrichStatus: 'error', enrichedAt: FieldValue.serverTimestamp() }, { merge: true });
-      return;
+
+    let discogsFields = {};
+    let enrichStatus = 'error';
+    if (token) {
+      try {
+        discogsFields = await enrichSong(song, token);
+        enrichStatus = discogsFields.enrichStatus || 'done';
+      } catch (err) {
+        console.error('enrichSongOnCreate discogs error', err);
+      }
     }
 
+    let geo = null;
     try {
-      const fields = await enrichSong(song, token);
-      await snap.ref.set({ ...fields, enrichedAt: FieldValue.serverTimestamp() }, { merge: true });
+      geo = await resolveArtistGeo(db, song.artist, discogsFields);
     } catch (err) {
-      console.error('enrichSongOnCreate error', err);
-      await snap.ref.set({ enrichStatus: 'error', enrichedAt: FieldValue.serverTimestamp() }, { merge: true });
+      console.error('enrichSongOnCreate geo error', err);
     }
+
+    await snap.ref.set(
+      { ...discogsFields, ...geoSongFields(geo), enrichStatus, enrichedAt: FieldValue.serverTimestamp() },
+      { merge: true },
+    );
   },
 );
 
