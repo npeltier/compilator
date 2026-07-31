@@ -176,7 +176,7 @@ export function visibleSongs() {
 // compilations. Songs whose artist MusicBrainz couldn't place land in `unknown`.
 // Returns { byCountry: Map<code, { count, songs, byAuthor: Map<email, n> }>,
 //           unknown, total }.
-export function songsByCountry({ authors = null } = {}) {
+export function songsByCountry({ authors = null, decade = null } = {}) {
   const authorSet = authors?.length ? new Set(authors.map((e) => e.toLowerCase())) : null;
   const byCountry = new Map();
   let unknown = 0;
@@ -184,6 +184,8 @@ export function songsByCountry({ authors = null } = {}) {
   for (const s of visibleSongs()) {
     const author = compilationsById.get(s.compilationId)?.author || '';
     if (authorSet && !authorSet.has(author.toLowerCase())) continue;
+    // Decade filter: keep songs whose year falls in [decade, decade+9].
+    if (decade != null && !(s.year >= decade && s.year < decade + 10)) continue;
     total += 1;
     const code = s.artistCountryCode || null;
     if (!code) { unknown += 1; continue; }
@@ -202,6 +204,14 @@ export function visibleAuthors() {
   const emails = new Set();
   for (const c of visibleCompilations()) if (c.author) emails.add(c.author);
   return [...emails].sort((a, b) => displayNameFor(a).localeCompare(displayNameFor(b), 'fr'));
+}
+
+// Distinct decades (decade-start year, e.g. 1960) present among visible songs
+// that carry a year, ascending — the domain for the map's decade slider.
+export function visibleSongDecades() {
+  const set = new Set();
+  for (const s of visibleSongs()) if (s.year) set.add(Math.floor(s.year / 10) * 10);
+  return [...set].sort((a, b) => a - b);
 }
 
 export function getUser(email) {

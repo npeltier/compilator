@@ -1397,6 +1397,11 @@ body.pf-open { overflow: hidden; }
 .map-legend-label { text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-faint); font-size: 10px; }
 .map-legend-item { display: inline-flex; align-items: center; gap: 5px; }
 .map-legend .sw { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+/* Decade slider under the map — filter songs by year. */
+.map-decades { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.map-decades input[type=range] { flex: 1; max-width: 520px; height: 4px; padding: 0; cursor: pointer; accent-color: var(--accent); }
+.map-decade-caption { text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-faint); font-size: 10px; }
+.map-decade-label { font-family: var(--display); font-size: 16px; letter-spacing: 0.03em; min-width: 72px; }
 .map-tip { position: fixed; z-index: 1200; pointer-events: none; background: var(--bg-elev-2); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font-size: 12px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4); }
 .map-panel { margin-top: 24px; }
 .map-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }

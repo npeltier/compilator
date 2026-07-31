@@ -29,24 +29,13 @@ import {
 const SESSION_KEY = 'compilator.player.v1';
 const VOLUME_KEY = 'compilator.volume.v1'; // persists across sessions (localStorage)
 
-// Detect iOS / iPadOS (incl. iPadOS 13+ which masquerades as "Macintosh" but
-// has touch). We deliberately avoid Web Audio there — see ensureGraph.
-function isIOS() {
-  const ua = navigator.userAgent || '';
-  return /iP(hone|od|ad)/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-}
-
 const audio = new Audio();
 audio.preload = 'metadata';
-// Needed so Web Audio can read the decoded samples (loudness normalization) for
-// cross-origin sources — Firebase download URLs are CORS-enabled by default.
-// Skipped on iOS, where we don't run the graph and blob playback is same-origin.
-if (!isIOS()) audio.crossOrigin = 'anonymous';
 
-// Volume state. On iOS Safari `audio.volume` is a hardware-owned no-op, so the
-// slider does nothing there today; once the Web Audio graph is up we drive
-// volume through its masterGain instead (which iOS *does* honour) — see below.
-// Persisted across sessions in localStorage.
+// Volume state: the user's chosen level/mute. The actual element volume folds a
+// per-track loudness-normalization gain on top of this (see applyVolume). On iOS
+// Safari `audio.volume` is a hardware-owned no-op, so the slider does nothing
+// there — an accepted limitation of not using Web Audio. Persisted across sessions.
 let volLevel = 1;
 let volMuted = false;
 try {
@@ -130,100 +119,29 @@ function prefetchAhead() {
   evictFarBlobs();
 }
 
-// ---- Web Audio graph (loudness normalization + iOS-capable volume) ----
-// Routing every track through gain nodes lets us (a) normalize per-track
-// loudness so the level doesn't jump between songs, and (b) control volume on
-// iOS, where `audio.volume` is a hardware-owned no-op but graph gain still works.
-//   mediaElementSource → trackGain (per-song) → masterGain (user volume) → out
-// The graph is best-effort: if Web Audio is unavailable or set-up throws, we
-// fall back to the element's own volume and skip normalization.
-const TARGET_LUFS = -14;  // reference level each track is nudged toward
-const MAX_GAIN_DB = 12;   // clamp so a very quiet track isn't blown up (or vice-versa)
-let audioCtx = null;
-let trackGain = null;
-let masterGain = null;
-let graphState = 'idle';  // 'idle' | 'ready' | 'failed'
-const clientLufsCache = new Map(); // storagePath → estimated LUFS (client fallback)
-
-function ensureGraph() {
-  if (graphState !== 'idle') return graphState === 'ready';
-  // Stay on the safe side on iOS: routing the <audio> element through an
-  // AudioContext can let iOS suspend playback when the screen locks / the app
-  // backgrounds, which would break the lock-screen playback the player relies
-  // on. Fall back to element volume there — no normalization, and the volume
-  // slider stays a hardware no-op, exactly as before this feature.
-  if (isIOS()) { graphState = 'failed'; return false; }
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) { graphState = 'failed'; return false; }
-    audioCtx = new Ctx();
-    const source = audioCtx.createMediaElementSource(audio);
-    trackGain = audioCtx.createGain();
-    masterGain = audioCtx.createGain();
-    source.connect(trackGain).connect(masterGain).connect(audioCtx.destination);
-    graphState = 'ready';
-    applyVolume(); // push the restored level onto masterGain
-    return true;
-  } catch (err) {
-    console.warn('Web Audio unavailable; falling back to element volume', err);
-    graphState = 'failed';
-    return false;
-  }
-}
-
-// AudioContexts start suspended and can be suspended again when backgrounded;
-// resume only succeeds from (or shortly after) a user gesture.
-function resumeCtx() {
-  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-}
+// ---- loudness normalization (via the element's own volume) ----
+// Even out the level between songs without Web Audio: fold a per-track gain,
+// derived from the MusicBrainz-era `loudnessLufs` measured at upload, into
+// `audio.volume`. Deliberately NOT a Web Audio graph — routing the element
+// through an AudioContext silences cross-origin audio (no CORS) on Firefox and
+// can suspend lock-screen playback on iOS. `audio.volume` is capped at 1, so we
+// can only bring loud tracks DOWN toward the target (no boosting quiet ones).
+const TARGET_LUFS = -14;   // reference level each track is nudged toward
+const MAX_ATTEN_DB = 18;   // don't attenuate a very loud track into inaudibility
+let trackGain = 1;         // current track's normalization multiplier (0..1)
 
 function lufsToGain(lufs) {
   if (lufs == null || !isFinite(lufs)) return 1;
-  const db = Math.max(-MAX_GAIN_DB, Math.min(MAX_GAIN_DB, TARGET_LUFS - lufs));
+  // Attenuate-only: element volume can't exceed 1, so clamp the gain to ≤ 1.
+  const db = Math.max(-MAX_ATTEN_DB, Math.min(0, TARGET_LUFS - lufs));
   return Math.pow(10, db / 20);
 }
 
-// Ramp the current track's normalization gain (a short ramp avoids an audible
-// click as one song hands off to the next).
-function setTrackGain(linear) {
-  if (graphState !== 'ready' || !trackGain) return;
-  const now = audioCtx.currentTime;
-  trackGain.gain.cancelScheduledValues(now);
-  trackGain.gain.setTargetAtTime(linear, now, 0.15);
-}
-
-// Client-side fallback loudness: decode the audio and derive an RMS-based level
-// (a rough LUFS proxy) when the server never measured the track. Cached per path.
-async function estimateLufsFromUrl(storagePath, url) {
-  if (clientLufsCache.has(storagePath)) return clientLufsCache.get(storagePath);
-  if (graphState !== 'ready') return null;
-  try {
-    const arr = await (await fetch(url)).arrayBuffer();
-    const decoded = await audioCtx.decodeAudioData(arr);
-    const data = decoded.getChannelData(0);
-    const step = Math.max(1, Math.floor(data.length / 500000)); // subsample for speed
-    let sum = 0; let n = 0;
-    for (let i = 0; i < data.length; i += step) { sum += data[i] * data[i]; n += 1; }
-    const rms = Math.sqrt(sum / Math.max(1, n));
-    const dbfs = 20 * Math.log10(rms || 1e-6);
-    clientLufsCache.set(storagePath, dbfs);
-    return dbfs;
-  } catch (err) {
-    console.warn('client loudness estimate failed', err?.message || err);
-    return null;
-  }
-}
-
-// Set the current track's gain: stored server LUFS first, client estimate as a
-// late-arriving fallback. Guarded so a slow estimate can't gain-stage the wrong
-// (already-advanced) track.
-async function applyNormalization(track, url) {
-  if (graphState !== 'ready') return;
-  const stored = getSong(track.songId)?.loudnessLufs;
-  if (stored != null) { setTrackGain(lufsToGain(stored)); return; }
-  setTrackGain(1); // neutral until an estimate lands
-  const est = await estimateLufsFromUrl(track.storagePath, url);
-  if (est != null && queue[cursor]?.storagePath === track.storagePath) setTrackGain(lufsToGain(est));
+// Set the current track's normalization gain from its stored loudness (songs
+// without a measurement play at unity — no normalization, never silent).
+function applyTrackGain(track) {
+  trackGain = lufsToGain(getSong(track?.songId)?.loudnessLufs);
+  applyVolume();
 }
 
 // ---- Chromecast integration ----
@@ -237,7 +155,7 @@ let lastRemoteDuration = 0;
 // OS media keys all share one path (and the cast branch lives in one place).
 function togglePlayPause() {
   if (isCasting()) { castPlayPause(); return; }
-  if (audio.paused) { userPaused = false; ensureGraph(); resumeCtx(); audio.play().catch(() => {}); }
+  if (audio.paused) { userPaused = false; audio.play().catch(() => {}); }
   else { userPaused = true; audio.pause(); }
 }
 
@@ -280,9 +198,7 @@ async function onCastDisconnect() {
   if (!url) return;
   // Resume locally where the receiver left off.
   audio.src = url;
-  ensureGraph();
-  resumeCtx();
-  applyNormalization(t, url);
+  applyTrackGain(t);
   try { audio.currentTime = lastRemoteTime || 0; } catch (_) { /* ignore */ }
   if (!userPaused) audio.play().catch(() => {});
 }
@@ -367,16 +283,9 @@ export function initPlayer() {
   audio.addEventListener('stalled', () => { if (!userPaused && !switching) audio.play().catch(() => {}); });
   // Resume once the interruption clears: the app regains focus / visibility
   // when the user returns from a call, or the OS sends a media-key `play`.
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) { resumeCtx(); resumeIfInterrupted(); } });
-  window.addEventListener('focus', () => { resumeCtx(); resumeIfInterrupted(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeIfInterrupted(); });
+  window.addEventListener('focus', resumeIfInterrupted);
   audio.addEventListener('ended', () => playAt(cursor + 1));
-
-  // Build + resume the Web Audio graph on the first user interaction (browsers
-  // only let an AudioContext start from a gesture). Cheap to re-run: ensureGraph
-  // is a no-op once set up, resumeCtx a no-op while running.
-  const kickstart = () => { ensureGraph(); resumeCtx(); };
-  document.addEventListener('pointerdown', kickstart);
-  document.addEventListener('keydown', kickstart);
 
   document.addEventListener('keydown', (e) => {
     if (e.code === 'Escape' && fsOpen) { closeFullscreen(); return; }
@@ -401,19 +310,12 @@ export function initPlayer() {
 }
 
 // ---- volume ----
-// `volLevel`/`volMuted` are the source of truth; two UIs (bar + fullscreen)
-// mirror them. `muted` is independent of the slider so un-muting returns to the
-// previous level. Applied through the graph's masterGain when it's up (works on
-// iOS), otherwise through the element's own volume/muted.
+// `volLevel`/`volMuted` are the source of truth (the UI mirrors them). The
+// element's actual volume is the user's level scaled by the current track's
+// normalization gain, so loud songs sit at the same level as quiet ones.
 function applyVolume() {
-  if (graphState === 'ready' && masterGain) {
-    masterGain.gain.value = volMuted ? 0 : volLevel;
-    audio.volume = 1;      // graph owns the level now — keep the element neutral
-    audio.muted = false;
-  } else {
-    audio.volume = volLevel;
-    audio.muted = volMuted;
-  }
+  audio.muted = volMuted;
+  audio.volume = Math.max(0, Math.min(1, volLevel * trackGain));
 }
 function volGlyph() {
   if (volMuted || volLevel === 0) return '🔇';
@@ -767,9 +669,7 @@ export async function playAt(idx) {
     switching = false;
   } else {
     audio.src = url;
-    ensureGraph();
-    resumeCtx();
-    applyNormalization(t, url); // set per-track gain (not awaited — ramps in)
+    applyTrackGain(t); // even out this track's level against the rest
     try {
       await audio.play();
     } catch (err) {
@@ -839,6 +739,7 @@ async function restoreSession() {
   try {
     const url = await resolveAudioUrl(saved.track.storagePath);
     audio.src = url;
+    applyTrackGain(saved.track);
     audio.currentTime = saved.position || 0;
     // Restore paused regardless of how the session was left: browsers block
     // autoplay without a user gesture, so attempting play() here just logs an
@@ -860,7 +761,7 @@ function setupMediaSession() {
   };
   // `play` doubles as the resume signal after a call: clearing userPaused lets
   // the auto-resume paths take over again.
-  set('play', () => { userPaused = false; resumeCtx(); audio.play().catch(() => {}); });
+  set('play', () => { userPaused = false; audio.play().catch(() => {}); });
   set('pause', () => { userPaused = true; audio.pause(); });
   set('previoustrack', () => playAt(cursor - 1));
   set('nexttrack', () => playAt(cursor + 1));

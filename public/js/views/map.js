@@ -16,6 +16,7 @@ import {
   ensureSongsLoaded,
   songsByCountry,
   visibleAuthors,
+  visibleSongDecades,
   displayNameFor,
   authorSlug,
   trackFromSongId,
@@ -79,6 +80,8 @@ export async function mount(el, { query }) {
 
   const allAuthors = visibleAuthors();
   const selected = new Set(); // empty = all authors
+  const decades = visibleSongDecades(); // e.g. [1950, 1960, …]
+  let selectedDecade = null; // null = all decades
 
   el.innerHTML = `
     <div class="shell map-shell">
@@ -92,6 +95,11 @@ export async function mount(el, { query }) {
       <div class="map-wrap">
         <svg class="map-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Carte des morceaux par pays"></svg>
         <div class="map-legend" id="mapLegend" aria-hidden="true"></div>
+      </div>
+      <div class="map-decades" id="mapDecades" hidden>
+        <span class="map-decade-caption">Décennie</span>
+        <input type="range" id="decadeSlider" min="0" max="0" step="1" value="0" aria-label="Filtrer par décennie">
+        <span class="map-decade-label" id="decadeLabel">Toutes</span>
       </div>
       <div class="map-panel" id="mapPanel"></div>
     </div>
@@ -129,7 +137,7 @@ export async function mount(el, { query }) {
 
   function recompute() {
     const authors = selected.size ? [...selected] : null;
-    const { byCountry, unknown, total } = songsByCountry({ authors });
+    const { byCountry, unknown, total } = songsByCountry({ authors, decade: selectedDecade });
     const scale = makeScale(byCountry);
     current = { byCountry, unknown, total, scale };
 
@@ -244,6 +252,21 @@ export async function mount(el, { query }) {
     chipRow.querySelectorAll('[data-email]').forEach((c) => c.classList.toggle('active', selected.has(c.dataset.email)));
     recompute();
   });
+
+  // Decade slider: index 0 = all, 1..N = decades[i-1]. Hidden if no years.
+  const decadesEl = el.querySelector('#mapDecades');
+  const slider = el.querySelector('#decadeSlider');
+  const decadeLabel = el.querySelector('#decadeLabel');
+  if (decades.length) {
+    decadesEl.hidden = false;
+    slider.max = String(decades.length);
+    slider.addEventListener('input', () => {
+      const i = Number(slider.value);
+      selectedDecade = i === 0 ? null : decades[i - 1];
+      decadeLabel.textContent = selectedDecade == null ? 'Toutes' : `${selectedDecade}s`;
+      recompute();
+    });
+  }
 
   recompute();
 
