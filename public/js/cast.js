@@ -38,8 +38,11 @@ function stateName() {
   if (!ready) return 'unavailable';
   const s = cast.framework.CastContext.getInstance().getCastState();
   if (s === cast.framework.CastState.CONNECTED) return 'connected';
-  if (s === cast.framework.CastState.NO_DEVICES_AVAILABLE) return 'unavailable';
-  return 'available'; // NOT_CONNECTED / CONNECTING with a device present
+  // Show the button whenever the Cast framework is ready (i.e. Chrome / Android),
+  // even before a device is detected — clicking it opens Chrome's device picker,
+  // which handles the "no devices found" case itself. (Previously we hid it on
+  // NO_DEVICES_AVAILABLE, so it never appeared unless a Chromecast was already on.)
+  return 'available';
 }
 function emitState() { handlers.onState?.(stateName()); }
 
