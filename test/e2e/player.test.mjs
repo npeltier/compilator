@@ -180,13 +180,19 @@ async function run() {
     await waitPlaying();
     ok('resume works (⏸)');
 
-    step('next / prev step through the compilation queue');
-    await page.click('#pb-next');
+    step('next / prev step through the compilation queue (from the expanded view)');
+    // Transport (prev/next) now lives in the expanded view; clicking the
+    // floating bar (here via the title, not the play button) opens it.
+    await page.click('#pb-title');
+    await page.waitForSelector('.player-full:not([hidden]) #pf-next', { timeout: 20000 });
+    await page.click('#pf-next');
     await waitTitle('PTEST Song Two');
     ok('next → "PTEST Song Two"');
-    await page.click('#pb-prev');
+    await page.click('#pf-prev');
     await waitTitle('PTEST Song One');
     ok('prev → "PTEST Song One"');
+    await page.click('#pf-min'); // collapse back to the bar
+    await page.waitForSelector('.player-full', { state: 'hidden', timeout: 20000 });
 
     step('while playing, search ANOTHER song and click it → player SWITCHES');
     const before = await title();

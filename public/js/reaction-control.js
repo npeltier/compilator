@@ -31,9 +31,11 @@ export function renderPalette(onPick, appliedSet) {
   return pal;
 }
 
-export function createReactionControl(songId, { compact = false } = {}) {
+// `readonly` renders just the aggregate strip with no "+" picker and no chip
+// interactions — a display of who reacted, used in the collapsed player bar.
+export function createReactionControl(songId, { compact = false, readonly = false } = {}) {
   const el = document.createElement('div');
-  el.className = 'rx' + (compact ? ' compact' : '');
+  el.className = 'rx' + (compact ? ' compact' : '') + (readonly ? ' readonly' : '');
 
   const strip = document.createElement('div');
   strip.className = 'rx-strip';
@@ -46,7 +48,8 @@ export function createReactionControl(songId, { compact = false } = {}) {
   addBtn.setAttribute('aria-expanded', 'false');
   addBtn.textContent = '+';
 
-  el.append(strip, addBtn);
+  if (readonly) el.append(strip);
+  else el.append(strip, addBtn);
 
   let palette = null;
   let tooltip = null;
@@ -100,14 +103,24 @@ export function createReactionControl(songId, { compact = false } = {}) {
     strip.innerHTML = '';
     for (const { emoji, users } of getAggregate(songId)) {
       const names = users.map(displayNameFor).join(', ');
+      const isMine = users.includes(me);
+      const inner = `<span class="rx-emo">${emoji}</span>`
+        + (users.length > 1 ? `<span class="rx-count">${users.length}</span>` : '');
+      if (readonly) {
+        // Display only: a static chip, no click behaviour.
+        const chip = document.createElement('span');
+        chip.className = 'rx-chip' + (isMine ? ' mine' : '');
+        chip.title = names;
+        chip.innerHTML = inner;
+        strip.appendChild(chip);
+        continue;
+      }
       const chip = document.createElement('button');
       chip.type = 'button';
-      const isMine = users.includes(me);
       chip.className = 'rx-chip' + (isMine ? ' mine' : '');
       chip.title = names;
       chip.setAttribute('aria-label', `${emoji} : ${names}`);
-      chip.innerHTML = `<span class="rx-emo">${emoji}</span>`
-        + (users.length > 1 ? `<span class="rx-count">${users.length}</span>` : '');
+      chip.innerHTML = inner;
       // Clicking my own reaction removes it; clicking someone else's reveals who reacted.
       chip.addEventListener('click', (e) => {
         e.stopPropagation();

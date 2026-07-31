@@ -242,7 +242,7 @@ function togglePlayPause() {
 }
 
 function updateCastButton(state) {
-  const btn = bar?.querySelector('#pb-cast');
+  const btn = fsEl?.querySelector('#pf-cast');
   if (!btn) return;
   btn.hidden = !state || state === 'unavailable';
   btn.classList.toggle('active', state === 'connected');
@@ -293,10 +293,6 @@ function onCastTime(cur, dur) {
   lastRemoteDuration = dur || 0;
   const d = dur || 0;
   const pos = d ? Math.round((cur / d) * 1000) : 0;
-  const barScrub = bar?.querySelector('#pb-scrub');
-  if (barScrub && document.activeElement !== barScrub) barScrub.value = pos;
-  const curEl = bar?.querySelector('#pb-cur'); if (curEl) curEl.textContent = fmt(cur);
-  const totEl = bar?.querySelector('#pb-tot'); if (totEl) totEl.textContent = fmt(d);
   syncFullscreenTime(pos, cur, d);
 }
 
@@ -321,61 +317,37 @@ export function initPlayer() {
   bar = document.createElement('div');
   bar.className = 'player-bar';
   bar.hidden = true;
+  // Minimal bar: cover, title, author·compilation, read-only reactions, a big
+  // play/pause, and read-only reactions. Everything else (prev/next, seek,
+  // volume, cast, stop, reacting) lives in the expanded view. The whole floating
+  // bar is the opener — click it (anywhere but the play button) to expand.
   bar.innerHTML = `
     <div class="pb-left">
-      <div class="pb-cover" id="pb-cover" title="Aller à la compilation"></div>
+      <div class="pb-cover" id="pb-cover"></div>
       <div class="now">
         <div class="t" id="pb-title">—</div>
         <div class="a" id="pb-artist"></div>
-        <div class="src" id="pb-source"></div>
       </div>
-    </div>
-    <div class="controls">
-      <button class="icon" id="pb-prev" title="Précédent" aria-label="Précédent">⏮</button>
-      <button class="icon" id="pb-play" title="Lecture / pause" aria-label="Lecture / pause">▶</button>
-      <button class="icon" id="pb-next" title="Suivant" aria-label="Suivant">⏭</button>
-      <span class="time" id="pb-cur">0:00</span>
-      <div class="scrub"><input type="range" id="pb-scrub" min="0" max="1000" value="0" step="1"></div>
-      <span class="time" id="pb-tot">0:00</span>
     </div>
     <div class="pb-right">
-      <div class="rx-host" id="pb-react"></div>
-      <span class="pb-sep" aria-hidden="true"></span>
-      <div class="pb-volume">
-        <button class="icon" id="pb-mute" title="Couper le son" aria-label="Couper le son">🔊</button>
-        <input type="range" id="pb-vol" class="vol" min="0" max="100" value="100" step="1" aria-label="Volume">
-      </div>
-      <button class="icon" id="pb-cast" title="Diffuser (Chromecast)" aria-label="Diffuser" hidden>📺</button>
-      <button class="icon" id="pb-expand" title="Plein écran" aria-label="Plein écran">⤢</button>
-      <button class="btn-ghost" id="pb-stop">Arrêter</button>
+      <div class="rx-host rx-readonly" id="pb-react" aria-hidden="true"></div>
+      <button class="icon pb-bigplay" id="pb-play" title="Lecture / pause" aria-label="Lecture / pause">▶</button>
     </div>
   `;
+  bar.setAttribute('role', 'button');
+  bar.setAttribute('tabindex', '0');
+  bar.setAttribute('aria-label', 'Développer le lecteur');
+  bar.title = 'Développer';
   document.body.appendChild(bar);
   buildFullscreen();
 
-  bar.querySelector('#pb-play').addEventListener('click', togglePlayPause);
-  bar.querySelector('#pb-prev').addEventListener('click', () => playAt(cursor - 1));
-  bar.querySelector('#pb-next').addEventListener('click', () => playAt(cursor + 1));
-  bar.querySelector('#pb-stop').addEventListener('click', stop);
-  bar.querySelector('#pb-cast').addEventListener('click', () => requestCastSession().catch(() => {}));
-  bar.querySelector('#pb-expand').addEventListener('click', openFullscreen);
-  bar.querySelector('#pb-cover').addEventListener('click', () => {
-    const t = queue[cursor];
-    if (t?.compilationId) navigate(`/c/${t.compilationId}`);
-  });
-  const scrub = bar.querySelector('#pb-scrub');
-  scrub.addEventListener('input', () => {
-    if (isCasting()) { if (lastRemoteDuration) castSeek((scrub.value / 1000) * lastRemoteDuration); return; }
-    if (audio.duration) audio.currentTime = (scrub.value / 1000) * audio.duration;
-  });
-  bar.querySelector('#pb-vol').addEventListener('input', (e) => setVolume(Number(e.target.value)));
-  bar.querySelector('#pb-mute').addEventListener('click', toggleMute);
+  // Click anywhere on the bar to expand; the play button opts out.
+  bar.addEventListener('click', openFullscreen);
+  bar.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); openFullscreen(); } });
+  bar.querySelector('#pb-play').addEventListener('click', (e) => { e.stopPropagation(); togglePlayPause(); });
   audio.addEventListener('timeupdate', () => {
     const d = audio.duration || 0;
     const pos = d ? Math.round((audio.currentTime / d) * 1000) : 0;
-    scrub.value = pos;
-    bar.querySelector('#pb-cur').textContent = fmt(audio.currentTime);
-    bar.querySelector('#pb-tot').textContent = fmt(d);
     syncFullscreenTime(pos, audio.currentTime, d);
     updatePositionState();
     persistThrottled();
@@ -450,15 +422,11 @@ function volGlyph() {
   return '🔊';
 }
 function syncVolumeUI() {
-  const pct = Math.round(volLevel * 100);
-  for (const id of ['pb-vol', 'pf-vol']) {
-    const el = document.getElementById(id);
-    if (el && document.activeElement !== el) el.value = pct;
-  }
-  for (const id of ['pb-mute', 'pf-mute']) {
-    const el = document.getElementById(id);
-    if (el) el.textContent = volGlyph();
-  }
+  // Volume UI lives only in the expanded view now.
+  const el = document.getElementById('pf-vol');
+  if (el && document.activeElement !== el) el.value = Math.round(volLevel * 100);
+  const mute = document.getElementById('pf-mute');
+  if (mute) mute.textContent = volGlyph();
 }
 function setVolume(pct) {
   volLevel = Math.max(0, Math.min(1, pct / 100));
@@ -504,7 +472,7 @@ function renderReactionControl() {
   if (rxControl && rxSongId === t.songId) { rxControl.refresh(); return; }
   if (rxControl) rxControl.unsub();
   host.innerHTML = '';
-  rxControl = createReactionControl(t.songId, { compact: true });
+  rxControl = createReactionControl(t.songId, { compact: true, readonly: true });
   rxSongId = t.songId;
   host.appendChild(rxControl.el);
   ensureCommunityReactionsLoaded().then(() => { if (rxSongId === t.songId) rxControl?.refresh(); });
@@ -587,6 +555,10 @@ function buildFullscreen() {
             <button class="icon" id="pf-mute" title="Couper le son" aria-label="Couper le son">🔊</button>
             <input type="range" id="pf-vol" class="vol" min="0" max="100" value="100" step="1" aria-label="Volume">
           </div>
+          <div class="pf-actions">
+            <button class="icon" id="pf-cast" title="Diffuser (Chromecast)" aria-label="Diffuser" hidden>📺</button>
+            <button class="btn-ghost" id="pf-stop">Arrêter</button>
+          </div>
         </section>
         <section class="pf-screen pf-screen-2">
           <div class="pf-meta" id="pf-meta"></div>
@@ -615,6 +587,8 @@ function buildFullscreen() {
   });
   fsEl.querySelector('#pf-vol').addEventListener('input', (e) => setVolume(Number(e.target.value)));
   fsEl.querySelector('#pf-mute').addEventListener('click', toggleMute);
+  fsEl.querySelector('#pf-cast').addEventListener('click', () => requestCastSession().catch(() => {}));
+  fsEl.querySelector('#pf-stop').addEventListener('click', () => { closeFullscreen(); stop(); });
   // Cover tap → jump to the compilation (and close), mirroring the bar cover.
   fsEl.querySelector('#pf-cover').addEventListener('click', () => {
     const t = queue[cursor];
@@ -754,8 +728,7 @@ export async function playAt(idx) {
   bar.hidden = false;
   document.body.classList.add('has-player');
   bar.querySelector('#pb-title').textContent = t.title || 'Sans titre';
-  bar.querySelector('#pb-artist').textContent = t.artist || '';
-  bar.querySelector('#pb-source').textContent = sourceLabel || t.compilationTitle || '';
+  bar.querySelector('#pb-artist').textContent = [t.artist, t.compilationTitle].filter(Boolean).join(' · ');
   applyCover(t);
   renderReactionControl();
   updateFullscreen();
@@ -859,8 +832,7 @@ async function restoreSession() {
   bar.hidden = false;
   document.body.classList.add('has-player');
   bar.querySelector('#pb-title').textContent = saved.track.title || 'Sans titre';
-  bar.querySelector('#pb-artist').textContent = saved.track.artist || '';
-  bar.querySelector('#pb-source').textContent = sourceLabel || saved.track.compilationTitle || '';
+  bar.querySelector('#pb-artist').textContent = [saved.track.artist, saved.track.compilationTitle].filter(Boolean).join(' · ');
   applyCover(saved.track);
   renderReactionControl();
   updateFullscreen();
