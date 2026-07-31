@@ -441,6 +441,7 @@ function buildFullscreen() {
           <div class="pf-now">
             <div class="pf-title" id="pf-title">—</div>
             <div class="pf-artist" id="pf-artist"></div>
+            <div class="pf-source" id="pf-source" hidden></div>
           </div>
           <div class="pf-react rx-host" id="pf-react"></div>
           <div class="pf-controls">
@@ -558,6 +559,10 @@ async function updateFullscreen() {
 
   fsEl.querySelector('#pf-title').textContent = t.title || 'Sans titre';
   fsEl.querySelector('#pf-artist').textContent = t.artist || '';
+  // Where this queue came from (a filter selection, a country, shuffle, …).
+  const srcEl = fsEl.querySelector('#pf-source');
+  srcEl.textContent = sourceLabel || '';
+  srcEl.hidden = !sourceLabel;
 
   // Cover (guarded against a track change mid-resolve).
   const cover = fsEl.querySelector('#pf-cover');

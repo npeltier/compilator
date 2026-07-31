@@ -803,6 +803,7 @@ body.pf-open { overflow: hidden; }
   line-height: 1.1;
 }
 .player-full .pf-artist { color: var(--ink-dim); font-size: 15px; font-style: italic; margin-top: 6px; }
+.player-full .pf-source { color: var(--ink-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; margin-top: 10px; }
 
 .player-full .pf-react { margin-top: 14px; justify-content: center; }
 

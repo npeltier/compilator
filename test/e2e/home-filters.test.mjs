@@ -211,20 +211,26 @@ async function run() {
       `include-Alpha + exclude-Beta should yield Alpha's two comps, got ${JSON.stringify(grid)}`);
     ok('exclude drops Beta; include keeps Alpha');
 
-    step('"Lire la sélection" plays the mix with a "+ − −" source label');
+    step('"Lire la sélection" plays the mix; the expanded view shows the "Alpha − Beta" source');
     await page.click('#sh-selection');
     await page.waitForTimeout(600);
+    // The collapsed bar is minimal now (cover/title/author/play); the queue's
+    // source label lives in the expanded view — open it (click the bar) to read it.
+    await page.click('#pb-title');
+    await page.waitForSelector('.player-full:not([hidden]) #pf-source', { timeout: 20000 });
     const player = await page.evaluate(() => ({
       hasPlayer: document.body.classList.contains('has-player'),
       barVisible: !document.querySelector('.player-bar')?.hidden,
       title: document.querySelector('#pb-title')?.textContent?.trim(),
-      source: document.querySelector('#pb-source')?.textContent?.trim(),
+      source: document.querySelector('#pf-source')?.textContent?.trim(),
     }));
     assert.equal(player.hasPlayer, true, 'body should have has-player class');
     assert.equal(player.barVisible, true, 'player bar should be visible');
     assert.match(player.title || '', /^FTEST Alpha .* – piste \d$/, `now-playing should be an Alpha song, got "${player.title}"`);
     assert.ok((player.source || '').includes('Alpha') && (player.source || '').includes('Beta') && (player.source || '').includes('−'),
       `source label should read "Alpha − Beta", got "${player.source}"`);
+    await page.click('#pf-min'); // collapse back so later steps see the bar
+    await page.waitForSelector('.player-full', { state: 'hidden', timeout: 20000 });
     ok(`playing "${player.title}" — source "${player.source}"`);
 
     step('save the filter → persists to Firestore and appears in the shuffle row');
@@ -251,8 +257,13 @@ async function run() {
     assert.equal((await selBtn()).hidden, true, 'selection button hidden after reset');
     await page.click('.saved-filter .sf-play');
     await page.waitForTimeout(600);
-    const replay = await page.evaluate(() => document.querySelector('#pb-source')?.textContent?.trim());
+    // Source label lives in the expanded view now — open it to read it.
+    await page.click('#pb-title');
+    await page.waitForSelector('.player-full:not([hidden]) #pf-source', { timeout: 20000 });
+    const replay = await page.evaluate(() => document.querySelector('#pf-source')?.textContent?.trim());
     assert.ok((replay || '').includes('Alpha'), `saved filter playback source, got "${replay}"`);
+    await page.click('#pf-min');
+    await page.waitForSelector('.player-full', { state: 'hidden', timeout: 20000 });
     ok(`saved filter replays — source "${replay}"`);
 
     step('delete the saved filter → button disappears and Firestore doc is gone');
