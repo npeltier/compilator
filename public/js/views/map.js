@@ -15,6 +15,7 @@ import { feature } from 'https://cdn.jsdelivr.net/npm/topojson-client@3/+esm';
 import {
   ensureSongsLoaded,
   songsByCountry,
+  songCountsByDecade,
   visibleAuthors,
   visibleSongDecades,
   displayNameFor,
@@ -98,8 +99,7 @@ export async function mount(el, { query }) {
       </div>
       <div class="map-decades" id="mapDecades" hidden>
         <span class="map-decade-caption">Décennie</span>
-        <input type="range" id="decadeSlider" min="0" max="0" step="1" value="0" aria-label="Filtrer par décennie">
-        <span class="map-decade-label" id="decadeLabel">Toutes</span>
+        <div class="decade-strip" id="decadeStrip" role="group" aria-label="Filtrer par décennie"></div>
       </div>
       <div class="map-panel" id="mapPanel"></div>
     </div>
@@ -154,6 +154,7 @@ export async function mount(el, { query }) {
     subEl.textContent = `${total} morceau${total > 1 ? 'x' : ''} situé${total > 1 ? 's' : ''} dans ${byCountry.size} pays`
       + (unknown ? ` · ${unknown} sans localisation` : '');
     renderLegend(scale);
+    renderDecades(); // re-shade + re-highlight the decade strip for the current filter
 
     // Keep the open panel in sync with the new filter.
     if (openCode && byCountry.has(openCode)) openCountry(openCode);
@@ -253,20 +254,34 @@ export async function mount(el, { query }) {
     recompute();
   });
 
-  // Decade slider: index 0 = all, 1..N = decades[i-1]. Hidden if no years.
+  // Decade strip: one segment per decade, shaded by that decade's song count
+  // (same ramp as the map), plus a "Toutes" reset. Click to filter by decade.
   const decadesEl = el.querySelector('#mapDecades');
-  const slider = el.querySelector('#decadeSlider');
-  const decadeLabel = el.querySelector('#decadeLabel');
-  if (decades.length) {
-    decadesEl.hidden = false;
-    slider.max = String(decades.length);
-    slider.addEventListener('input', () => {
-      const i = Number(slider.value);
-      selectedDecade = i === 0 ? null : decades[i - 1];
-      decadeLabel.textContent = selectedDecade == null ? 'Toutes' : `${selectedDecade}s`;
-      recompute();
-    });
+  const stripEl = el.querySelector('#decadeStrip');
+  if (decades.length) decadesEl.hidden = false;
+
+  function renderDecades() {
+    if (!decades.length) return;
+    const counts = songCountsByDecade({ authors: selected.size ? [...selected] : null });
+    const max = Math.max(1, ...decades.map((d) => counts.get(d) || 0));
+    const color = (c) => (c ? RAMP[Math.min(RAMP.length, Math.max(1, Math.ceil((c / max) * RAMP.length))) - 1] : NO_DATA);
+    const seg = (d) => {
+      const c = d == null ? 0 : (counts.get(d) || 0);
+      const active = selectedDecade === d ? ' active' : '';
+      const style = d == null ? '' : ` style="--seg:${color(c)}"`;
+      const label = d == null ? 'Toutes' : `${d}s`;
+      const title = d == null ? 'Toutes les décennies' : `${c} morceau${c > 1 ? 'x' : ''}`;
+      return `<button class="decade-seg${active}" data-d="${d == null ? 'all' : d}" title="${title}"${style}>${label}</button>`;
+    };
+    stripEl.innerHTML = [seg(null), ...decades.map(seg)].join('');
   }
+
+  stripEl.addEventListener('click', (e) => {
+    const b = e.target.closest('.decade-seg');
+    if (!b) return;
+    selectedDecade = b.dataset.d === 'all' ? null : Number(b.dataset.d);
+    recompute();
+  });
 
   recompute();
 

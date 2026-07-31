@@ -246,7 +246,7 @@ export function initPlayer() {
       </div>
     </div>
     <div class="pb-right">
-      <div class="rx-host rx-readonly" id="pb-react" aria-hidden="true"></div>
+      <div class="rx-host" id="pb-react"></div>
       <button class="icon pb-bigplay" id="pb-play" title="Lecture / pause" aria-label="Lecture / pause">▶</button>
     </div>
   `;
@@ -374,7 +374,7 @@ function renderReactionControl() {
   if (rxControl && rxSongId === t.songId) { rxControl.refresh(); return; }
   if (rxControl) rxControl.unsub();
   host.innerHTML = '';
-  rxControl = createReactionControl(t.songId, { compact: true, readonly: true });
+  rxControl = createReactionControl(t.songId, { compact: true });
   rxSongId = t.songId;
   host.appendChild(rxControl.el);
   ensureCommunityReactionsLoaded().then(() => { if (rxSongId === t.songId) rxControl?.refresh(); });

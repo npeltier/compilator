@@ -207,11 +207,26 @@ export function visibleAuthors() {
 }
 
 // Distinct decades (decade-start year, e.g. 1960) present among visible songs
-// that carry a year, ascending — the domain for the map's decade slider.
+// that carry a year, ascending — the domain for the map's decade picker.
 export function visibleSongDecades() {
   const set = new Set();
   for (const s of visibleSongs()) if (s.year) set.add(Math.floor(s.year / 10) * 10);
   return [...set].sort((a, b) => a - b);
+}
+
+// Song count per decade (decade-start year → count), optionally scoped to
+// `authors`. Powers the map's colour-by-decade intensity strip.
+export function songCountsByDecade({ authors = null } = {}) {
+  const authorSet = authors?.length ? new Set(authors.map((e) => e.toLowerCase())) : null;
+  const counts = new Map();
+  for (const s of visibleSongs()) {
+    if (!s.year) continue;
+    const author = compilationsById.get(s.compilationId)?.author || '';
+    if (authorSet && !authorSet.has(author.toLowerCase())) continue;
+    const d = Math.floor(s.year / 10) * 10;
+    counts.set(d, (counts.get(d) || 0) + 1);
+  }
+  return counts;
 }
 
 export function getUser(email) {
