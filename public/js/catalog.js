@@ -176,6 +176,20 @@ export function visibleSongs() {
 // compilations. Songs whose artist MusicBrainz couldn't place land in `unknown`.
 // Returns { byCountry: Map<code, { count, songs, byAuthor: Map<email, n> }>,
 //           unknown, total }.
+// Coerce a song's `year` to a plausible 4-digit year (or null). Some docs carry
+// dirty values — YYYYMMDD dates like 20200610, or junk — which would otherwise
+// produce absurd "decades". Accept a real year in range; for a longer number,
+// fall back to its leading 4 digits (20200610 → 2020).
+function yearOf(v) {
+  if (v == null || v === '') return null;
+  const n = parseInt(v, 10);
+  if (Number.isFinite(n) && n >= 1900 && n <= 2035) return n;
+  const m = String(v).match(/\d{4}/);
+  if (m) { const y = Number(m[0]); if (y >= 1900 && y <= 2035) return y; }
+  return null;
+}
+const decadeOf = (v) => { const y = yearOf(v); return y == null ? null : Math.floor(y / 10) * 10; };
+
 export function songsByCountry({ authors = null, decade = null } = {}) {
   const authorSet = authors?.length ? new Set(authors.map((e) => e.toLowerCase())) : null;
   const byCountry = new Map();
@@ -184,8 +198,8 @@ export function songsByCountry({ authors = null, decade = null } = {}) {
   for (const s of visibleSongs()) {
     const author = compilationsById.get(s.compilationId)?.author || '';
     if (authorSet && !authorSet.has(author.toLowerCase())) continue;
-    // Decade filter: keep songs whose year falls in [decade, decade+9].
-    if (decade != null && !(s.year >= decade && s.year < decade + 10)) continue;
+    // Decade filter: keep songs whose (sanitized) year falls in the decade.
+    if (decade != null && decadeOf(s.year) !== decade) continue;
     total += 1;
     const code = s.artistCountryCode || null;
     if (!code) { unknown += 1; continue; }
@@ -210,7 +224,7 @@ export function visibleAuthors() {
 // that carry a year, ascending — the domain for the map's decade picker.
 export function visibleSongDecades() {
   const set = new Set();
-  for (const s of visibleSongs()) if (s.year) set.add(Math.floor(s.year / 10) * 10);
+  for (const s of visibleSongs()) { const d = decadeOf(s.year); if (d != null) set.add(d); }
   return [...set].sort((a, b) => a - b);
 }
 
@@ -220,10 +234,10 @@ export function songCountsByDecade({ authors = null } = {}) {
   const authorSet = authors?.length ? new Set(authors.map((e) => e.toLowerCase())) : null;
   const counts = new Map();
   for (const s of visibleSongs()) {
-    if (!s.year) continue;
+    const d = decadeOf(s.year);
+    if (d == null) continue;
     const author = compilationsById.get(s.compilationId)?.author || '';
     if (authorSet && !authorSet.has(author.toLowerCase())) continue;
-    const d = Math.floor(s.year / 10) * 10;
     counts.set(d, (counts.get(d) || 0) + 1);
   }
   return counts;
