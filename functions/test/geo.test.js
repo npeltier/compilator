@@ -73,6 +73,40 @@ describe('resolveArtistGeo cache freshness', () => {
   });
 });
 
+describe('one failing lookup does not suppress the fallbacks', () => {
+  test('a throwing Discogs-id lookup still lets the name search run', async () => {
+    // The real Taxi/EV case: MB 404s on the Discogs URL. Before, the shared
+    // try/catch swallowed the throw AND skipped the name search → no country.
+    const db = mkDb();
+    lookupArtistByDiscogsId.mockRejectedValue(new Error('MusicBrainz 404: Not Found'));
+    lookupArtistGeo.mockResolvedValue({ source: 'musicbrainz', mbid: 'ro', country: 'Romania', countryCode: 'RO' });
+    const geo = await resolveArtistGeo(db, 'Taxi', { discogsArtistId: 3101298 });
+    expect(lookupArtistGeo).toHaveBeenCalled();
+    expect(geo.countryCode).toBe('RO');
+  });
+
+  test('a throwing name search still leaves the Discogs bio as a last resort', async () => {
+    const db = mkDb();
+    lookupArtistByDiscogsId.mockResolvedValue(null);
+    lookupArtistGeo.mockRejectedValue(new Error('MusicBrainz 503 (rate limited)'));
+    const geo = await resolveArtistGeo(db, 'Taxi', {
+      discogsArtistId: 3101298,
+      discogsFallback: { artistCountry: 'Peru', artistTown: 'Chimbote' },
+    });
+    expect(geo.source).toBe('discogs-bio');
+    expect(geo.country).toBe('Peru');
+  });
+
+  test('both lookups failing with no bio yields a retryable none', async () => {
+    const db = mkDb();
+    lookupArtistByDiscogsId.mockRejectedValue(new Error('MusicBrainz 404: Not Found'));
+    lookupArtistGeo.mockRejectedValue(new Error('MusicBrainz 503 (rate limited)'));
+    const geo = await resolveArtistGeo(db, 'Taxi', { discogsArtistId: 3101298 });
+    expect(geo.source).toBe('none');
+    expect(isGeoResolved(geo)).toBe(false);
+  });
+});
+
 describe('ambiguous name matches', () => {
   // What MusicBrainz gives us for "SOAPBOX": Sweden wins on score, Glasgow is the
   // real band, and there's no Discogs id to settle it (the release was a nomatch).

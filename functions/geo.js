@@ -89,12 +89,23 @@ export async function resolveArtistGeo(db, artist, {
   const snap = await ref.get();
   if (!force && snap.exists && isGeoResolved(snap.data())) return snap.data();
 
+  // Each step gets its OWN try/catch: a step that fails must not take the later
+  // fallbacks down with it. They shared one before, so a throw in step 1 skipped
+  // the name search entirely and the artist ended up with no country at all.
   let geo = null;
-  try {
-    // 1. Exact match via the Discogs link.
-    if (discogsArtistId) geo = await lookupArtistByDiscogsId(discogsArtistId, { delayMs });
-    // 2. Name search, gated on agreement with the Discogs bio country.
-    if (!geo || !geo.countryCode) {
+
+  // 1. Exact match via the Discogs link.
+  if (discogsArtistId) {
+    try {
+      geo = await lookupArtistByDiscogsId(discogsArtistId, { delayMs });
+    } catch (err) {
+      console.warn('geo discogs-id lookup failed:', err.message);
+    }
+  }
+
+  // 2. Name search, gated on agreement with the Discogs bio country.
+  if (!geo || !geo.countryCode) {
+    try {
       const byName = await lookupArtistGeo(artist, { delayMs });
       if (byName?.countryCode) {
         const bio = discogsFallback?.artistCountry;
@@ -107,9 +118,9 @@ export async function resolveArtistGeo(db, artist, {
         }
         // else: distrust the ambiguous name match; fall through to the bio below.
       }
+    } catch (err) {
+      console.warn('geo name lookup failed:', err.message);
     }
-  } catch (err) {
-    console.warn('geo lookup failed:', err.message);
   }
 
   // 3. Discogs bio-parsed country as a last resort.

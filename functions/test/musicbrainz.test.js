@@ -169,6 +169,28 @@ describe('lookupArtistGeo', () => {
   });
 });
 
+describe('lookupArtistByDiscogsId 404 handling', () => {
+  afterEach(() => { delete global.fetch; });
+
+  test('returns null (does not throw) when MB holds no URL entity', async () => {
+    // MB answers 404, not an empty result, for a Discogs URL it doesn't know.
+    global.fetch = jest.fn(async () => ({
+      ok: false, status: 404,
+      text: async () => '{"error":"Not Found"}',
+      json: async () => ({ error: 'Not Found' }),
+    }));
+    await expect(lookupArtistByDiscogsId(3101298, { delayMs: 0 })).resolves.toBeNull();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('still throws on a real server error', async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: false, status: 500, text: async () => 'boom', json: async () => ({}),
+    }));
+    await expect(lookupArtistByDiscogsId(1, { delayMs: 0 })).rejects.toThrow(/500/);
+  });
+});
+
 describe('namesakeRivals', () => {
   const rivalIds = (name, chosenId) => namesakeRivals(
     SOAPBOX_RESULTS, name, SOAPBOX_RESULTS.find((a) => a.id === chosenId),
@@ -189,6 +211,24 @@ describe('namesakeRivals', () => {
       { id: 'b', name: 'Trio', score: 99, country: 'DE', area: { name: 'Germany' } },
     ];
     expect(namesakeRivals(results, 'Trio', results[0])).toEqual([]);
+  });
+
+  test('flags a credible rival even 10 points behind (the EV case)', () => {
+    // France scores 100, the correct UK producer 90 — the spread says nothing
+    // about which band is on the compilation, so it's still a coin-flip.
+    const results = [
+      { id: 'fr', name: 'EV', score: 100, country: 'FR', area: { name: 'France' } },
+      { id: 'gb', name: 'EV', score: 90, area: { name: 'Bury St Edmunds' }, disambiguation: 'UK artist/songwriter/producer' },
+    ];
+    expect(namesakeRivals(results, 'EV', results[0]).map((a) => a.id)).toEqual(['gb']);
+  });
+
+  test('ignores a rival below the confidence floor', () => {
+    const results = [
+      { id: 'a', name: 'Igorrr', score: 100, country: 'FR', area: { name: 'France' } },
+      { id: 'b', name: 'Igorrr', score: 89, country: 'BE', area: { name: 'Belgium' } },
+    ];
+    expect(namesakeRivals(results, 'Igorrr', results[0])).toEqual([]);
   });
 
   test('ignores a distant score and handles no candidates', () => {

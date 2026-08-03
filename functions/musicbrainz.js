@@ -17,11 +17,6 @@ import { normalizeArtist } from './doublons.js';
 const MB_API = 'https://musicbrainz.org/ws/2';
 const USER_AGENT = 'Compilator/1.0 (+https://compilator-83816.web.app)';
 const MIN_SCORE = 90; // MB search score (0-100); below this a match is a guess
-// A rival namesake within this many points of the winner makes the pick a
-// coin-flip. Real case: "Soapbox" scores SE 100 / Glasgow 98 / DE 97 — the
-// search score reflects text similarity and popularity, not which band is on the
-// compilation, so we surface the tie instead of silently trusting the top hit.
-const AMBIGUITY_GAP = 5;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -40,15 +35,19 @@ export function countryLabel(code) {
 /**
  * GET a MusicBrainz API path as JSON. Retries on 503 (MB's "slow down / busy"
  * signal) up to 3×; throws on other non-2xx.
+ *
+ * `notFoundOk` returns null on 404 instead of throwing — for lookups where "MB
+ * has never heard of this" is an ordinary answer rather than a failure.
  */
-export async function mbFetch(path, { attempt = 0 } = {}) {
+export async function mbFetch(path, { attempt = 0, notFoundOk = false } = {}) {
   const url = path.startsWith('http') ? path : `${MB_API}${path}`;
   const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' } });
   if (res.status === 503) {
     if (attempt >= 3) throw new Error('MusicBrainz 503 (rate limited)');
     await sleep((attempt + 1) * 1500);
-    return mbFetch(path, { attempt: attempt + 1 });
+    return mbFetch(path, { attempt: attempt + 1, notFoundOk });
   }
+  if (res.status === 404 && notFoundOk) return null;
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`MusicBrainz ${res.status}: ${body.slice(0, 200)}`);
@@ -83,20 +82,27 @@ export function describeCandidate(a) {
 
 /**
  * Rival candidates that make `chosen` a coin-flip: same name (true namesakes,
- * not "Soapbox Symphony"), within AMBIGUITY_GAP points, and pointing at
- * DIFFERENT geography — a near-tie that agrees on the country is harmless, since
- * the country is all we store.
+ * not "Soapbox Symphony"), credible in their own right (>= MIN_SCORE, the same
+ * floor pickArtist uses), and pointing at DIFFERENT geography — a rival that
+ * agrees on the country is harmless, since the country is all we store.
+ *
+ * The bar is MIN_SCORE rather than "close to the winner" because the MB score
+ * measures text similarity and popularity, not which band is on the compilation:
+ * "EV" gives the French celtic rock band 100 and the correct UK producer 90, a
+ * 10-point spread that says nothing about which is right. If two artists of the
+ * same name both clear the confidence floor and disagree on where they're from,
+ * that's a question for a human, not a coin-flip to record as fact.
  */
 export function namesakeRivals(results, name, chosen) {
   if (!chosen) return [];
   const target = normalizeArtist(name);
-  const floor = (Number(chosen.score) || 0) - AMBIGUITY_GAP;
+  const floor = MIN_SCORE;
   const chosenCode = chosen.country || null;
   const chosenArea = chosen.area?.name || null;
   return (results || []).filter(Boolean).filter((a) => {
     if (a === chosen || (a.id && a.id === chosen.id)) return false;
     if (normalizeArtist(a.name) !== target) return false;
-    if ((Number(a.score) || 0) < floor) return false;
+    if ((Number(a.score) || 0) < floor) return false; // not a credible match at all
     const code = a.country || null;
     // Compare countries when both are known; otherwise fall back to area names
     // (MB often leaves `country` empty but names the city, as with Glasgow).
@@ -175,12 +181,22 @@ export async function lookupArtistGeo(name, { delayMs = 1100 } = {}) {
  *
  * Returns the geo fields (source 'discogs+musicbrainz'), or null if MB has no
  * artist linked to that Discogs id.
+ *
+ * MB answers 404 — not an empty result — when it holds no URL entity for the
+ * resource, which is the common case for smaller artists. That's a plain "no
+ * link", so it must NOT throw: callers fall back to a name search, and an
+ * exception here used to abort that fallback (Taxi and EV ended up with no
+ * country at all despite being findable by name).
  */
 export async function lookupArtistByDiscogsId(discogsArtistId, { delayMs = 1100 } = {}) {
   if (!discogsArtistId) return null;
   // Canonical numeric form (what we store); MB indexes this exact URL.
   const resource = `https://www.discogs.com/artist/${discogsArtistId}`;
-  const data = await mbFetch(`/url?resource=${encodeURIComponent(resource)}&inc=artist-rels&fmt=json`);
+  const data = await mbFetch(
+    `/url?resource=${encodeURIComponent(resource)}&inc=artist-rels&fmt=json`,
+    { notFoundOk: true },
+  );
+  if (!data) return null;
   const rels = (data.relations || []).filter((r) => r.artist);
   if (!rels.length) return null;
   // Prefer a linked artist that carries a country.

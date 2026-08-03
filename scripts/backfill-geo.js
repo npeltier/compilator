@@ -47,7 +47,7 @@ admin.initializeApp({ projectId: PROJECT, storageBucket: BUCKET });
 // Import AFTER initializeApp so the shared modules reuse our configured app.
 const { resolveArtistGeo, geoSongFields, isGeoResolved } = await import('../functions/geo.js');
 const { normalizeArtist } = await import('../functions/doublons.js');
-const { isVariousArtist } = await import('../functions/discogs.js');
+const { isVariousArtist, parseArtistLocation } = await import('../functions/discogs.js');
 
 const db = admin.firestore();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -77,8 +77,15 @@ async function run() {
     const discogsArtistId = s.discogs?.artistId || null;
     const key = discogsArtistId ? `discogs-${discogsArtistId}` : name;
     let g = byArtist.get(key);
-    if (!g) { g = { raw, discogsArtistId, force: false, refs: [] }; byArtist.set(key, g); }
+    if (!g) { g = { raw, discogsArtistId, force: false, bio: null, refs: [] }; byArtist.set(key, g); }
     g.force ||= recheck;
+    // The Discogs bio is the third leg of resolveArtistGeo — it vetoes a name
+    // match from the wrong country and serves as a last resort. The trigger
+    // passes it; this script never did, leaving both paths dead here. The
+    // bio-parsed fields aren't readable from the song doc (geoSongFields
+    // overwrites artistCountry/artistTown with the geo result under the same
+    // names), so re-parse the stored prose.
+    g.bio ||= s.artistBio || null;
     g.refs.push(d.ref);
   }
   console.log(`${byArtist.size} unique artist(s) need resolution.\n`);
@@ -86,9 +93,15 @@ async function run() {
   let resolved = 0;
   let withCountry = 0;
   let songsWritten = 0;
-  for (const [, { raw, discogsArtistId, force, refs }] of byArtist) {
+  for (const [, { raw, discogsArtistId, force, bio, refs }] of byArtist) {
     try {
-      const geo = await resolveArtistGeo(db, raw, { discogsArtistId, delayMs: 1100, force: FORCE || force });
+      const bioLoc = bio ? parseArtistLocation(bio) : null;
+      const discogsFallback = bioLoc?.country || bioLoc?.town
+        ? { artistCountry: bioLoc.country, artistTown: bioLoc.town }
+        : null;
+      const geo = await resolveArtistGeo(db, raw, {
+        discogsArtistId, discogsFallback, delayMs: 1100, force: FORCE || force,
+      });
       resolved += 1;
       if (geo?.countryCode || geo?.country) withCountry += 1;
       const fields = geoSongFields(geo);
