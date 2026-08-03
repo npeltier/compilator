@@ -146,6 +146,7 @@ register('/upload', () => import('./views/upload.js'));
 register('/profile', () => import('./views/profile.js'));
 register('/migrate', () => import('./views/migrate.js'));
 register('/users', () => import('./views/users.js'));
+register('/validate', () => import('./views/validate.js'));
 register('/author/:name', () => import('./views/author.js'));
 
 start(document.getElementById('view'));

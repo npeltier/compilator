@@ -641,6 +641,12 @@ body.has-player { padding-bottom: 108px; }
   font-size: 14px;
   background: var(--bg-elev);
 }
+/* Year · country · region editor, spanning under title/artist. */
+.tracklist.edit .ed-meta { grid-column: 1 / -1; display: grid; grid-template-columns: 84px 1.6fr 1fr; gap: 8px; }
+.tracklist.edit .ed-meta input, .tracklist.edit .ed-meta select {
+  font: inherit; font-size: 13px; padding: 6px 8px; min-width: 0;
+  background: var(--bg-elev); color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
+}
 .tracklist.edit .ed-actions { display: flex; gap: 4px; align-items: center; }
 .tracklist.edit .ed-actions button {
   background: transparent;
@@ -1459,5 +1465,28 @@ body.pf-open { overflow: hidden; }
   word-break: break-word;
   max-width: 100%;
   user-select: all;
+}
+
+/* ---- /validate (admin data validation) ---- */
+.vld-list { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.vld-row {
+  display: grid;
+  grid-template-columns: 160px 1.4fr 1.2fr 70px 1fr 1fr auto auto;
+  gap: 8px; align-items: center;
+  padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-elev);
+}
+.vld-row.vld-done { opacity: 0.5; }
+.vld-src { font-size: 11px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.06em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vld-row input, .vld-row select {
+  background: var(--bg); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 13px; min-width: 0;
+}
+.vld-row .vld-miss { border-color: var(--accent); }
+.vld-row .vld-save { padding: 6px 12px; font-size: 12px; white-space: nowrap; }
+.vld-status { font-size: 14px; min-width: 20px; color: var(--ink-dim); }
+.vld-pager { display: flex; align-items: center; justify-content: center; gap: 16px; margin: 20px 0; color: var(--ink-dim); font-size: 13px; }
+@media (max-width: 900px) {
+  .vld-row { grid-template-columns: 1fr 1fr; }
+  .vld-src { grid-column: 1 / -1; }
 }
 

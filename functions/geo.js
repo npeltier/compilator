@@ -11,11 +11,12 @@
 
 import { FieldValue } from 'firebase-admin/firestore';
 import { normalizeArtist } from './doublons.js';
-import { lookupArtistGeo } from './musicbrainz.js';
+import { lookupArtistGeo, lookupArtistByDiscogsId } from './musicbrainz.js';
 
 // Bump when the resolution pipeline changes in a way that should re-run. Cache
 // docs and song docs carry `geoV`; anything below the current version re-resolves.
-export const GEO_VERSION = 1;
+// v2: Discogs-id disambiguation (exact MB artist via the Discogs URL relation).
+export const GEO_VERSION = 2;
 
 // A Firestore-doc-id-safe key for an artist. normalizeArtist only lowercases +
 // trims, so names like "AC/DC" keep a slash — which Firestore treats as a path
@@ -25,17 +26,41 @@ export function artistKey(artist) {
   return normalizeArtist(artist).replace(/\//g, '_');
 }
 
+// Cache doc id. Prefer the Discogs artist id (unique per REAL artist) so two
+// different artists that share a name don't collapse into one cache entry — the
+// bug behind "Taxi = Romania" etc. Fall back to the normalized name.
+function cacheKey(artist, discogsArtistId) {
+  return discogsArtistId ? `discogs-${discogsArtistId}` : artistKey(artist);
+}
+
+// Loose country-agreement check between an MB canonical label ("Peru") and a
+// Discogs-bio-parsed country (which may be a demonym/label like "Peru"/"USA").
+function countriesAgree(a, b) {
+  const norm = (s) => String(s || '').toLowerCase().trim();
+  const x = norm(a);
+  const y = norm(b);
+  if (!x || !y) return false;
+  return x === y || x.includes(y) || y.includes(x);
+}
+
 /**
  * Resolve an artist's geography, using (and populating) the artistMeta cache.
- * MusicBrainz is primary; `discogsFallback` (the bio-parsed { artistCountry,
- * artistTown } from discogs.js) is used only when MB has no confident match.
  *
- * @returns the cache doc data: { artist, country, countryCode, region,
- *   regionCode, town, source, mbid, geoV }
+ * Resolution order:
+ *   1. Discogs id → exact MB artist (authoritative; disambiguates namesakes).
+ *   2. MB name search — but rejected if its country disagrees with the Discogs
+ *      bio's country (the actual record wins).
+ *   3. Discogs bio-parsed country as a last resort.
+ *
+ * @param opts.discogsArtistId  the song's discogs.artistId (the disambiguator)
+ * @param opts.discogsFallback  the discogs.js fields { artistCountry, artistTown }
+ * @returns the cache doc data
  */
-export async function resolveArtistGeo(db, artist, discogsFallback = null, { delayMs = 1100, force = false } = {}) {
-  const key = artistKey(artist);
-  if (!key) return null;
+export async function resolveArtistGeo(db, artist, {
+  discogsArtistId = null, discogsFallback = null, delayMs = 1100, force = false,
+} = {}) {
+  const key = cacheKey(artist, discogsArtistId);
+  if (!key || key === 'discogs-') return null;
 
   const ref = db.collection('artistMeta').doc(key);
   const snap = await ref.get();
@@ -43,12 +68,22 @@ export async function resolveArtistGeo(db, artist, discogsFallback = null, { del
 
   let geo = null;
   try {
-    geo = await lookupArtistGeo(artist, { delayMs });
+    // 1. Exact match via the Discogs link.
+    if (discogsArtistId) geo = await lookupArtistByDiscogsId(discogsArtistId, { delayMs });
+    // 2. Name search, gated on agreement with the Discogs bio country.
+    if (!geo || !geo.countryCode) {
+      const byName = await lookupArtistGeo(artist, { delayMs });
+      if (byName?.countryCode) {
+        const bio = discogsFallback?.artistCountry;
+        if (!bio || countriesAgree(byName.country, bio)) geo = byName;
+        // else: distrust the ambiguous name match; fall through to the bio below.
+      }
+    }
   } catch (err) {
-    console.warn('lookupArtistGeo failed:', err.message);
+    console.warn('geo lookup failed:', err.message);
   }
 
-  // Fall back to whatever Discogs parsed from the bio when MB gave us no country.
+  // 3. Discogs bio-parsed country as a last resort.
   if ((!geo || !geo.countryCode) && discogsFallback?.artistCountry) {
     geo = {
       source: 'discogs-bio',

@@ -435,7 +435,10 @@ export const enrichSongOnCreate = onDocumentCreated(
 
     let geo = null;
     try {
-      geo = await resolveArtistGeo(db, song.artist, discogsFields);
+      geo = await resolveArtistGeo(db, song.artist, {
+        discogsArtistId: discogsFields.discogs?.artistId || null,
+        discogsFallback: discogsFields,
+      });
     } catch (err) {
       console.error('enrichSongOnCreate geo error', err);
     }

@@ -34,6 +34,7 @@ import {
   removeCompilationLocal,
 } from '../catalog.js';
 import { isAdminSync } from '../auth-guard.js';
+import { loadCountryOptions, countryOptionsHTML, countryName } from '../countries.js';
 import {
   deleteCompilation,
   replaceSongBinary,
@@ -93,6 +94,7 @@ export async function mount(el, { params }) {
       label: s.label || null,
       artistBio: s.artistBio || null,
       artistCountry: s.artistCountry || null,
+      artistCountryCode: s.artistCountryCode || null,
       artistRegion: s.artistRegion || null,
       artistTown: s.artistTown || null,
       discogsUrl: s.discogs?.releaseUrl || null,
@@ -104,6 +106,10 @@ export async function mount(el, { params }) {
 
   let mode = 'view';
   let editState = null;
+  // Country picker options for edit mode; loaded lazily, then a re-render fills
+  // the selects. Empty until resolved (rows fall back to the current value).
+  let editCountries = [];
+  const countriesReady = loadCountryOptions().then((o) => { editCountries = o; }).catch(() => {});
   let rxControls = [];
 
   function recomputeTotal() {
@@ -223,6 +229,10 @@ export async function mount(el, { params }) {
         title: t.title,
         artist: t.artist,
         duration: t.duration,
+        year: t.year || '',
+        artistCountry: t.artistCountry || '',
+        artistCountryCode: t.artistCountryCode || '',
+        artistRegion: t.artistRegion || '',
         deleted: false,
       })),
     };
@@ -284,6 +294,8 @@ export async function mount(el, { params }) {
 
     const list = main.querySelector('#edTracks');
     renderEditRows(list);
+    // Once the country list resolves, re-render so the selects are populated.
+    countriesReady.then(() => { if (mode === 'edit') renderEditRows(list); });
 
     main.querySelector('#cancelEdit').addEventListener('click', () => renderView());
     main.querySelector('#saveEdit').addEventListener('click', () => saveEdit());
@@ -454,11 +466,22 @@ export async function mount(el, { params }) {
       li.draggable = !r.uploading;
       li.dataset.idx = i;
       li.className = [r.deleted ? 'deleted' : '', r.uploading ? 'uploading' : ''].filter(Boolean).join(' ');
+      // Country select — the current code stays selectable even before the
+      // full option list has loaded (fallback single option).
+      const countryOpts = editCountries.length
+        ? countryOptionsHTML(editCountries, r.artistCountryCode)
+        : `<option value="${escape(r.artistCountryCode)}" selected>${escape(r.artistCountry || '— pays —')}</option>`;
       li.innerHTML = `
         <span class="grip" title="Glisser pour réordonner">⋮⋮</span>
         <div class="ed-fields">
           <input class="ed-title" placeholder="Titre" value="${escape(r.title)}" ${r.uploading ? 'disabled' : ''}>
           <input class="ed-artist" placeholder="Artiste" value="${escape(r.artist)}" ${r.uploading ? 'disabled' : ''}>
+          ${r.uploading ? '' : `
+          <div class="ed-meta">
+            <input class="ed-year" placeholder="Année" inputmode="numeric" value="${escape(r.year)}">
+            <select class="ed-country">${countryOpts}</select>
+            <input class="ed-region" placeholder="Région" value="${escape(r.artistRegion)}">
+          </div>`}
         </div>
         <div class="ed-actions">
           ${r.uploading ? '' : `
@@ -476,6 +499,12 @@ export async function mount(el, { params }) {
 
       li.querySelector('.ed-title').addEventListener('input', (e) => { r.title = e.target.value; });
       li.querySelector('.ed-artist').addEventListener('input', (e) => { r.artist = e.target.value; });
+      li.querySelector('.ed-year').addEventListener('input', (e) => { r.year = e.target.value; });
+      li.querySelector('.ed-region').addEventListener('input', (e) => { r.artistRegion = e.target.value; });
+      li.querySelector('.ed-country').addEventListener('change', (e) => {
+        r.artistCountryCode = e.target.value;
+        r.artistCountry = e.target.value ? (countryName(editCountries, e.target.value) || '') : '';
+      });
       li.querySelector('.ed-delete').addEventListener('click', () => {
         r.deleted = true;
         renderEditRows(list);
@@ -611,6 +640,21 @@ export async function mount(el, { params }) {
         if (original.order !== i) update.order = i;
         if ((r.title || '') !== (original.title || '')) update.title = r.title || null;
         if ((r.artist || '') !== (original.artist || '')) update.artist = r.artist || null;
+
+        // Year + geo, editable by the author/admin. A change stamps `geoManual`
+        // so the geo backfill/enrichment never overwrites the correction.
+        const yr = /^\d{4}$/.test(String(r.year).trim()) ? Number(r.year) : null;
+        if (yr !== (original.year || null)) update.year = yr;
+        if ((r.artistCountryCode || '') !== (original.artistCountryCode || '')) {
+          update.artistCountryCode = r.artistCountryCode || null;
+          update.artistCountry = r.artistCountry || null;
+        }
+        if ((r.artistRegion || '') !== (original.artistRegion || '')) {
+          update.artistRegion = r.artistRegion || null;
+        }
+        if ('artistCountryCode' in update || 'artistCountry' in update || 'artistRegion' in update) {
+          update.geoManual = true;
+        }
         if (Object.keys(update).length > 0) {
           update.updatedAt = serverTimestamp();
           batch.update(songRef, update);

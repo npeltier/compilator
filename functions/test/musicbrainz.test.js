@@ -5,6 +5,7 @@ const {
   pickArtist,
   classifyArea,
   lookupArtistGeo,
+  lookupArtistByDiscogsId,
 } = await import('../musicbrainz.js');
 
 describe('countryLabel', () => {
@@ -123,5 +124,43 @@ describe('lookupArtistGeo', () => {
     expect(geo.country).toBe('France');
     expect(geo.countryCode).toBe('FR');
     expect(geo.region).toBeNull();
+  });
+});
+
+describe('lookupArtistByDiscogsId', () => {
+  afterEach(() => { delete global.fetch; });
+  const jsonRes = (body) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
+
+  test('resolves the exact MB artist linked to the Discogs id (disambiguates namesakes)', async () => {
+    global.fetch = jest.fn(async (url) => {
+      if (url.includes('/url?resource=')) {
+        // MB must be queried by the canonical numeric Discogs URL.
+        expect(decodeURIComponent(url)).toContain('https://www.discogs.com/artist/12345');
+        return jsonRes({ relations: [{ artist: { id: 'mbid-peru', name: 'Taxi', country: 'PE' } }] });
+      }
+      if (url.includes('/artist/mbid-peru')) {
+        return jsonRes({ id: 'mbid-peru', name: 'Taxi', country: 'PE', 'begin-area': { id: 'area-lima' } });
+      }
+      if (url.includes('/area/area-lima')) {
+        return jsonRes({ name: 'Lima', type: 'City' });
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    const geo = await lookupArtistByDiscogsId('12345', { delayMs: 0 });
+    expect(geo.source).toBe('discogs+musicbrainz');
+    expect(geo.countryCode).toBe('PE');
+    expect(geo.country).toBe('Peru');
+    expect(geo.town).toBe('Lima');
+  });
+
+  test('returns null when no MB artist is linked to the Discogs id', async () => {
+    global.fetch = jest.fn(async () => jsonRes({ relations: [] }));
+    expect(await lookupArtistByDiscogsId('999', { delayMs: 0 })).toBeNull();
+  });
+
+  test('null id short-circuits without a request', async () => {
+    global.fetch = jest.fn();
+    expect(await lookupArtistByDiscogsId(null, { delayMs: 0 })).toBeNull();
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

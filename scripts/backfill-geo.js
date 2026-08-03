@@ -44,16 +44,21 @@ async function run() {
   const songs = await db.collectionGroup('songs').get();
   console.log(`Scanning ${songs.size} song(s)…`);
 
-  // Group songs by normalized artist; keep only songs that still need geo.
-  const byArtist = new Map(); // key → { raw, refs: [DocRef] }
+  // Group by the SAME key the cache uses — Discogs artist id when present, else
+  // normalized name — so distinct same-named artists resolve separately. Skip
+  // songs a human has corrected (geoManual) and those already at this version.
+  const byArtist = new Map(); // key → { raw, discogsArtistId, refs: [DocRef] }
   for (const d of songs.docs) {
     const s = d.data();
     const raw = s.artist;
-    const key = normalizeArtist(raw);
-    if (!key || isVariousArtist(raw)) continue;
+    const name = normalizeArtist(raw);
+    if (!name || isVariousArtist(raw)) continue;
+    if (s.geoManual) continue; // never overwrite a manual correction
     if (!FORCE && s.geoV === GEO_VERSION) continue;
+    const discogsArtistId = s.discogs?.artistId || null;
+    const key = discogsArtistId ? `discogs-${discogsArtistId}` : name;
     let g = byArtist.get(key);
-    if (!g) { g = { raw, refs: [] }; byArtist.set(key, g); }
+    if (!g) { g = { raw, discogsArtistId, refs: [] }; byArtist.set(key, g); }
     g.refs.push(d.ref);
   }
   console.log(`${byArtist.size} unique artist(s) need resolution.\n`);
@@ -61,9 +66,9 @@ async function run() {
   let resolved = 0;
   let withCountry = 0;
   let songsWritten = 0;
-  for (const [, { raw, refs }] of byArtist) {
+  for (const [, { raw, discogsArtistId, refs }] of byArtist) {
     try {
-      const geo = await resolveArtistGeo(db, raw, null, { delayMs: 1100, force: FORCE });
+      const geo = await resolveArtistGeo(db, raw, { discogsArtistId, delayMs: 1100, force: FORCE });
       resolved += 1;
       if (geo?.countryCode || geo?.country) withCountry += 1;
       const fields = geoSongFields(geo);

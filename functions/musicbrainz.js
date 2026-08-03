@@ -117,9 +117,42 @@ export async function lookupArtistGeo(name, { delayMs = 1100 } = {}) {
   const search = await mbFetch(`/artist?query=${q}&limit=5&fmt=json`);
   const artist = pickArtist(search.artists, name);
   if (!artist) return null;
+  return geoFromArtist(artist, 'musicbrainz', { delayMs });
+}
 
+/**
+ * The reliable disambiguator: resolve the EXACT MusicBrainz artist linked to a
+ * Discogs artist id via MB's URL relationship, then read its geography. This is
+ * how Discogs "validates" the match — the Discogs release pins the real artist,
+ * so same-named namesakes (two "Taxi"s, two "EV"s…) can't be confused.
+ *
+ * Returns the geo fields (source 'discogs+musicbrainz'), or null if MB has no
+ * artist linked to that Discogs id.
+ */
+export async function lookupArtistByDiscogsId(discogsArtistId, { delayMs = 1100 } = {}) {
+  if (!discogsArtistId) return null;
+  // Canonical numeric form (what we store); MB indexes this exact URL.
+  const resource = `https://www.discogs.com/artist/${discogsArtistId}`;
+  const data = await mbFetch(`/url?resource=${encodeURIComponent(resource)}&inc=artist-rels&fmt=json`);
+  const rels = (data.relations || []).filter((r) => r.artist);
+  if (!rels.length) return null;
+  // Prefer a linked artist that carries a country.
+  const stub = rels.find((r) => r.artist.country) || rels[0];
+  if (!stub.artist.id) return null;
+  // The relation stub omits begin-area — fetch the full artist for area details.
+  await sleep(delayMs);
+  let artist = stub.artist;
+  try { artist = await mbFetch(`/artist/${stub.artist.id}?fmt=json`); } catch (_) { /* fall back to stub */ }
+  return geoFromArtist(artist, 'discogs+musicbrainz', { delayMs });
+}
+
+/**
+ * Reduce a full MB artist object (with `country` + `area`/`begin-area`) to geo
+ * fields, resolving the begin-area for subdivision + town (one extra request).
+ */
+async function geoFromArtist(artist, source, { delayMs = 1100 } = {}) {
   const out = {
-    source: 'musicbrainz',
+    source,
     mbid: artist.id || null,
     countryCode: artist.country || null,
     country: countryLabel(artist.country) || null,
@@ -127,7 +160,6 @@ export async function lookupArtistGeo(name, { delayMs = 1100 } = {}) {
     regionCode: null,
     town: null,
   };
-
   const beginId = artist['begin-area']?.id || artist.area?.id || null;
   if (beginId) {
     await sleep(delayMs);
@@ -140,7 +172,7 @@ export async function lookupArtistGeo(name, { delayMs = 1100 } = {}) {
       out.country ||= geo.country;
       out.countryCode ||= geo.countryCode;
     } catch (err) {
-      // Subdivision/town are best-effort — keep the country from the search.
+      // Subdivision/town are best-effort — keep the country we already have.
       console.warn('mb area lookup failed', err.message);
     }
   }
