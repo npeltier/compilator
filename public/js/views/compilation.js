@@ -42,6 +42,7 @@ import {
   uploadCover,
   uploadSong,
   recomputeDurations,
+  recomputeDoublons,
 } from '../upload-pipeline.js';
 import { navigate } from '../router.js';
 import { avatarHTML, paintAvatars } from '../avatar.js';
@@ -405,6 +406,22 @@ export async function mount(el, { params }) {
     });
 
     await runWithConcurrency(tasks, 3);
+
+    // The uploads above ran three at a time, and processSong's per-song doublon
+    // recompute reads a snapshot that may not contain the concurrent siblings —
+    // converge them in one server pass, then pull the settled chips back in.
+    const added = songs.filter((s) => pending.some((p) => p.row.songId === s.songId));
+    if (added.length) {
+      try {
+        await recomputeDoublons(id);
+        await Promise.all(added.map(async (s) => {
+          const snap = await getDoc(doc(db, 'compilations', id, 'songs', s.songId));
+          if (snap.exists()) s.doublons = snap.data().doublons || null;
+        }));
+      } catch (e) {
+        console.warn('recomputeDoublons failed (non-fatal):', e);
+      }
+    }
 
     // processSong already bumped the compilation's counters server-side; mirror
     // that into the shared in-memory catalog object so listings stay in sync.

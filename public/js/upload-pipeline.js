@@ -19,6 +19,7 @@ const uploadCoverFn = httpsCallable(functions, 'uploadCover');
 const replaceSongFn = httpsCallable(functions, 'replaceSong');
 const deleteCompilationFn = httpsCallable(functions, 'deleteCompilation');
 const recomputeDurationsFn = httpsCallable(functions, 'recomputeDurations');
+const recomputeDoublonsFn = httpsCallable(functions, 'recomputeDoublons');
 const upsertUserFn = httpsCallable(functions, 'upsertUser');
 const removeUserFn = httpsCallable(functions, 'removeUser');
 const approveAccessRequestFn = httpsCallable(functions, 'approveAccessRequest');
@@ -129,6 +130,17 @@ export async function deleteCompilation(compilationId) {
  */
 export async function recomputeDurations(compilationId, { force = false } = {}) {
   const { data } = await recomputeDurationsFn({ compilationId, force });
+  return data;
+}
+
+/**
+ * Recompute the duplicate chips for a whole compilation. Call this once after a
+ * batch of uploads settles: processSong's per-song recompute races with its
+ * concurrent siblings, so an album can otherwise end up with partial chips.
+ * Returns { updated } — the number of song docs rewritten.
+ */
+export async function recomputeDoublons(compilationId) {
+  const { data } = await recomputeDoublonsFn({ compilationId });
   return data;
 }
 

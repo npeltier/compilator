@@ -11,6 +11,7 @@ import {
   replaceSongFromStaging,
   uploadCoverFromStaging,
 } from './processing.js';
+import { recomputeDoublonsForCompilation } from './doublons.js';
 import { enrichSong, isEnrichable, resolveToken } from './discogs.js';
 import { resolveArtistGeo, geoSongFields } from './geo.js';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -152,6 +153,35 @@ export const recomputeLoudness = onCall({ memory: '1GiB', timeoutSeconds: 300 },
   } catch (err) {
     console.error('recomputeLoudness error', err);
     throw new HttpsError('internal', err.message || 'Failed to recompute loudness.');
+  }
+});
+
+/**
+ * recomputeDoublons({ compilationId })
+ *
+ * Recompute the duplicate chips for every song of a compilation in one pass.
+ *
+ * processSong already does this per song, but an album is uploaded with several
+ * songs in flight at once and each of those recomputes reads its own snapshot of
+ * the song collection — one that may not yet contain its siblings — so tracks
+ * that are doublons of each other can end up with partial chips. The upload and
+ * edit views call this once after their batch settles to converge the result.
+ * Author or admin only.
+ */
+export const recomputeDoublons = onCall({ memory: '512MiB', timeoutSeconds: 300 }, async (req) => {
+  const { email } = await requireAllowlistedCaller(req.auth);
+  const { compilationId } = req.data || {};
+  if (!compilationId) {
+    throw new HttpsError('invalid-argument', 'compilationId is required.');
+  }
+  const comp = await loadCompilationOrThrow(compilationId);
+  await requireAuthorOrAdmin(comp, email);
+  try {
+    const updated = await recomputeDoublonsForCompilation(admin.firestore(), compilationId);
+    return { updated };
+  } catch (err) {
+    console.error('recomputeDoublons error', err);
+    throw new HttpsError('internal', err.message || 'Failed to recompute doublons.');
   }
 });
 

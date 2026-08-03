@@ -4,15 +4,14 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { parseBuffer } from 'music-metadata';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import ffmpeg from 'fluent-ffmpeg';
-import { Readable } from 'stream';
-import { readFile, unlink } from 'fs/promises';
+import { readFile, writeFile, unlink } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 
 import { computeMp3Hash, getStorePath } from './hash.js';
 import { isAdminEmail } from './auth.js';
-import { findAndUpdateDoublons } from './doublons.js';
+import { findAndUpdateDoublons, updateDoublonsAfterReplace } from './doublons.js';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
@@ -31,23 +30,43 @@ export const DURATION_FIX_VERSION = 1;
 // normalize playback gain across tracks.
 export const LOUDNESS_VERSION = 1;
 
+// Stage an input buffer to a real file and hand ffmpeg the *path*, never a pipe.
+// ffmpeg needs to seek its input as much as its output: a container that keeps
+// its index at the end of the file — MP4/M4A's `moov` atom being the common case
+// — is only described after the whole stream has been read, so ffmpeg has to
+// rewind to reach the samples it just learned about. From a non-seekable stream
+// it can't. It logs "partial file", encodes zero frames, and *still exits 0*, so
+// the 'error' handler never fires and we get a ~1KB MP3 with a valid header and
+// no audio at all.
+async function withTempInput(inputBuf, fn) {
+  const path = join(tmpdir(), `in-${randomUUID()}`);
+  await writeFile(path, inputBuf);
+  try {
+    return await fn(path);
+  } finally {
+    await unlink(path).catch(() => {});
+  }
+}
+
 // Run ffmpeg from an input buffer to a *seekable temp file*, then return the
 // bytes. The output MUST be a real file, not a pipe: with a non-seekable stream
 // ffmpeg can't rewind to write the VBR/Xing header, which leaves the MP3 with a
 // bogus duration (e.g. a 9:38 track reported as 55:19). Writing to disk lets it
 // finalize the header correctly.
 async function ffmpegToTempMp3(inputBuf, configure) {
-  const out = join(tmpdir(), `mp3-${randomUUID()}.mp3`);
-  try {
-    await new Promise((resolve, reject) => {
-      const cmd = ffmpeg(Readable.from(inputBuf)).noVideo().format('mp3');
-      configure(cmd);
-      cmd.on('error', reject).on('end', resolve).save(out);
-    });
-    return await readFile(out);
-  } finally {
-    await unlink(out).catch(() => {});
-  }
+  return withTempInput(inputBuf, async (inPath) => {
+    const out = join(tmpdir(), `mp3-${randomUUID()}.mp3`);
+    try {
+      await new Promise((resolve, reject) => {
+        const cmd = ffmpeg(inPath).noVideo().format('mp3');
+        configure(cmd);
+        cmd.on('error', reject).on('end', resolve).save(out);
+      });
+      return await readFile(out);
+    } finally {
+      await unlink(out).catch(() => {});
+    }
+  });
 }
 
 // Measure integrated loudness (LUFS) with ffmpeg's `loudnorm` filter in analysis
@@ -59,15 +78,15 @@ async function measureLoudnessLufs(inputBuf) {
   const sink = join(tmpdir(), `ln-${randomUUID()}.null`);
   let stderr = '';
   try {
-    await new Promise((resolve, reject) => {
-      ffmpeg(Readable.from(inputBuf))
+    await withTempInput(inputBuf, (inPath) => new Promise((resolve, reject) => {
+      ffmpeg(inPath)
         .audioFilters('loudnorm=print_format=json')
         .format('null')
         .on('stderr', (line) => { stderr += `${line}\n`; })
         .on('error', reject)
         .on('end', resolve)
         .save(sink);
-    });
+    }));
   } catch (err) {
     console.warn('measureLoudnessLufs failed:', err?.message || err);
     return null;
@@ -88,7 +107,15 @@ async function measureLoudnessLufs(inputBuf) {
 async function transcodeToMp3(buf) {
   const probe = await parseBuffer(buf);
   if (probe.format.container === 'MPEG') return buf;
-  return ffmpegToTempMp3(buf, (cmd) => cmd.audioCodec('libmp3lame').audioQuality(2));
+  const out = await ffmpegToTempMp3(buf, (cmd) => cmd.audioCodec('libmp3lame').audioQuality(2));
+  // ffmpeg exits 0 even when its demuxer gave up and nothing was encoded, so a
+  // clean 'end' event proves nothing — check the result actually carries audio.
+  // Without this the pipeline happily hashes and stores a silent stub.
+  const check = await parseBuffer(out, 'audio/mpeg');
+  if (!(check.format?.duration > 0)) {
+    throw new Error(`Transcode of ${probe.format.container || 'this file'} produced no audio.`);
+  }
+  return out;
 }
 
 // Losslessly re-mux an MP3 (copy the audio frames, rewrite a correct header) to
@@ -412,7 +439,10 @@ export async function replaceSongFromStaging({ tempPath, compilationId, songId, 
   if (!songSnap.exists) {
     throw new Error('Song not found.');
   }
-  const oldDuration = songSnap.data().duration || 0;
+  const song = songSnap.data();
+  const oldDuration = song.duration || 0;   // may be null on songs from a failed ingest
+  const oldHash = song.hash || null;
+  const { artist } = song;
 
   const stagingFile = bucket.file(tempPath);
   const [stagingBuf] = await stagingFile.download();
@@ -435,6 +465,14 @@ export async function replaceSongFromStaging({ tempPath, compilationId, songId, 
   }, { merge: true });
 
   try { await stagingFile.delete(); } catch (e) { /* ignore */ }
+
+  // The binary changed, so this song's `sameTrack` chips — and those of the songs
+  // sitting on either the old or the new hash — are stale (best-effort).
+  try {
+    await updateDoublonsAfterReplace(db, compilationId, songId, { oldHash, newHash: hash, artist });
+  } catch (e) {
+    console.warn('updateDoublonsAfterReplace failed (non-fatal):', e);
+  }
 
   return { dedupHit, duration: newDuration };
 }

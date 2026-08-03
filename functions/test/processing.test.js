@@ -104,10 +104,11 @@ jest.unstable_mockModule('music-metadata', () => ({
   })),
 }));
 
-// Mock fluent-ffmpeg: the real code now writes to a seekable temp file and reads
-// it back, so `.save(path)` must produce a file and signal completion. We write
-// a tiny placeholder (parseBuffer is mocked, so its contents don't matter) and
-// fire the 'end' handler.
+// Mock fluent-ffmpeg: the real code writes to a seekable temp file and reads it
+// back, so `.save(path)` must produce a file and signal completion. We write a
+// tiny placeholder (parseBuffer is mocked, so its contents don't matter) and fire
+// the 'end' handler — deliberately never 'error', mirroring the real ffmpeg's
+// habit of exiting 0 even when it encoded nothing.
 jest.unstable_mockModule('fluent-ffmpeg', () => {
   const ffmpegFn = jest.fn(() => {
     const handlers = {};
@@ -116,9 +117,11 @@ jest.unstable_mockModule('fluent-ffmpeg', () => {
       format: () => cmd,
       audioCodec: () => cmd,
       audioQuality: () => cmd,
+      audioFilters: () => cmd,
       on: (ev, cb) => { handlers[ev] = cb; return cmd; },
       save: (path) => {
         writeFileSync(path, 'ffmpeg-out');
+        if (handlers.stderr) handlers.stderr('{"input_i":"-14.5"}');
         if (handlers.end) handlers.end();
         return cmd;
       },
@@ -130,6 +133,8 @@ jest.unstable_mockModule('fluent-ffmpeg', () => {
 });
 
 jest.unstable_mockModule('@ffmpeg-installer/ffmpeg', () => ({ default: { path: '/usr/bin/ffmpeg' } }));
+
+const { parseBuffer } = await import('music-metadata');
 
 const {
   processSongFromStaging,
@@ -178,6 +183,35 @@ describe('processSongFromStaging', () => {
     expect(songSetMock).toHaveBeenCalled();
   });
 
+  test('rejects a transcode that produced no audio even though ffmpeg exited cleanly', async () => {
+    // ffmpeg can bail on an input it cannot seek, encode zero frames, and still
+    // exit 0 — the 'end' handler fires, so only re-probing the output catches it.
+    // First parse = source probe (non-MPEG → transcode), second = the guard.
+    parseBuffer
+      .mockResolvedValueOnce({ format: { container: 'M4A' }, common: {} })
+      .mockResolvedValueOnce({ format: { duration: 0 }, common: {} });
+
+    await expect(processSongFromStaging({
+      tempPath: 'uploads/u1/abc.mp3',
+      compilationId: 'comp1',
+      order: 0,
+    })).rejects.toThrow(/no audio/i);
+
+    // Nothing half-written: no binary in /store/, no song doc, no counter bump.
+    expect(storeFileMock.save).not.toHaveBeenCalled();
+    expect(songSetMock).not.toHaveBeenCalled();
+    expect(compRef.set).not.toHaveBeenCalled();
+  });
+
+  test('recomputes doublons for the new song', async () => {
+    await processSongFromStaging({
+      tempPath: 'uploads/u1/abc.mp3',
+      compilationId: 'comp1',
+      order: 0,
+    });
+    expect(collectionGroupGet).toHaveBeenCalled();
+  });
+
   test('throws on missing args', async () => {
     await expect(processSongFromStaging({})).rejects.toThrow();
   });
@@ -223,6 +257,18 @@ describe('replaceSongFromStaging', () => {
     const compUpdate = compRef.set.mock.calls.find((c) => c[0].totalDuration)?.[0];
     expect(compUpdate.totalDuration.__increment).toBe(60);
     expect(stagingFileMock.delete).toHaveBeenCalled();
+  });
+
+  test('refreshes doublons after the binary swap', async () => {
+    // The hash changed, so this song's sameTrack chips and those of the songs on
+    // the old hash are both stale — the recompute has to run.
+    await replaceSongFromStaging({
+      tempPath: 'uploads/u1/abc.mp3',
+      compilationId: 'comp1',
+      songId: 'song_id',
+      callerEmail: 'u1@example.com',
+    });
+    expect(collectionGroupGet).toHaveBeenCalled();
   });
 
   test('rejects non-author non-admin caller', async () => {

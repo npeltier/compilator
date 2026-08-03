@@ -7,7 +7,7 @@
 // of creating a second. If it's already published, we send them to it.
 
 import { auth, db } from '../firebase-init.js';
-import { uploadSong, uploadCover, runWithConcurrency, recomputeDurations } from '../upload-pipeline.js';
+import { uploadSong, uploadCover, runWithConcurrency, recomputeDurations, recomputeDoublons } from '../upload-pipeline.js';
 import { nextCompilationSlot, slotLabel, deadlineLabel } from '../slot.js';
 import { navigate } from '../router.js';
 import { allCompilations, displayNameFor, upsertCompilationLocal } from '../catalog.js';
@@ -339,6 +339,18 @@ export async function mount(el) {
         }
       } catch (e) {
         console.warn('recomputeDurations failed (non-fatal):', e);
+      }
+
+      // 4c. Converge the duplicate chips. processSong recomputes them per song,
+      // but the uploads above ran three at a time and each recompute read a
+      // snapshot that could be missing its siblings — so tracks that are doublons
+      // of one another inside this very album would show partial chips.
+      if (newOnes.length) {
+        try {
+          await recomputeDoublons(compId);
+        } catch (e) {
+          console.warn('recomputeDoublons failed (non-fatal):', e);
+        }
       }
 
       // 5. Sync local catalog + UI.
