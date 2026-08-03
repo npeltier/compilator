@@ -654,6 +654,10 @@ export async function mount(el, { params }) {
         }
         if ('artistCountryCode' in update || 'artistCountry' in update || 'artistRegion' in update) {
           update.geoManual = true;
+          // Human answer — drop any provisional marker so the song stops being
+          // flagged in /validate and re-resolved by the backfill.
+          update.geoSource = 'manual';
+          update.geoAlternatives = null;
         }
         if (Object.keys(update).length > 0) {
           update.updatedAt = serverTimestamp();

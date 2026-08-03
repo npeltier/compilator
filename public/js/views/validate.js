@@ -1,9 +1,15 @@
 // Admin-only data-validation screen at /validate.
 //
 // Lists every song that's under-determined — missing a title, artist, year, or
-// country — and lets an admin amend it inline. Saves write straight to the song
-// doc (rules already allow admin writes) and stamp `geoManual` so the geo
-// backfill/enrichment never overwrites a human correction.
+// country, OR carrying a country we're not sure about — and lets an admin amend
+// it inline. Saves write straight to the song doc (rules already allow admin
+// writes) and stamp `geoManual` so the geo backfill/enrichment never overwrites a
+// human correction.
+//
+// "Not sure about" = geoSource 'musicbrainz-ambiguous': MusicBrainz had two
+// same-named artists from different places with near-identical search scores, so
+// the stored country is a coin-flip. The rival candidates ride along in
+// `geoAlternatives` and are shown on the row so the choice can be made here.
 
 import { requireAdmin } from '../auth-guard.js';
 import { db } from '../firebase-init.js';
@@ -24,7 +30,14 @@ function escape(s) {
 }
 
 const plausibleYear = (y) => { const n = parseInt(y, 10); return Number.isFinite(n) && n >= 1900 && n <= 2035; };
-const isIncomplete = (s) => !s.title || !s.artist || !plausibleYear(s.year) || !s.artistCountry;
+
+// Keep in sync with AMBIGUOUS_SOURCE in functions/geo.js (no shared module
+// between the browser bundle and the functions runtime).
+const AMBIGUOUS_SOURCE = 'musicbrainz-ambiguous';
+// A human decision wins: once geoManual is set the row is settled, whatever the
+// automated source said.
+const isAmbiguous = (s) => s.geoSource === AMBIGUOUS_SOURCE && !s.geoManual;
+const needsReview = (s) => !s.title || !s.artist || !plausibleYear(s.year) || !s.artistCountry || isAmbiguous(s);
 
 export async function mount(el, { query }) {
   await requireAdmin(); // redirects non-admins
@@ -33,7 +46,11 @@ export async function mount(el, { query }) {
 
   const optionsHTML = (selected) => countryOptionsHTML(countries, selected);
 
-  const all = visibleSongs().filter(isIncomplete);
+  // Uncertain-country rows first: they're the ones a human can settle quickly
+  // from the alternatives shown, and they're invisible everywhere else.
+  const all = visibleSongs().filter(needsReview)
+    .sort((a, b) => Number(isAmbiguous(b)) - Number(isAmbiguous(a)));
+  const ambiguousCount = all.filter(isAmbiguous).length;
   let page = Math.max(0, Number(query?.page) || 0);
   const pages = Math.max(1, Math.ceil(all.length / PAGE));
 
@@ -43,7 +60,7 @@ export async function mount(el, { query }) {
     el.innerHTML = `
       <div class="shell">
         <h1>À valider</h1>
-        <p class="map-sub">${all.length} morceau(x) incomplet(s) — titre, artiste, année ou pays manquant.</p>
+        <p class="map-sub">${all.length} morceau(x) à revoir — titre, artiste, année ou pays manquant${ambiguousCount ? `, dont ${ambiguousCount} au pays incertain` : ''}.</p>
         <div class="vld-list">
           ${slice.map((s, i) => rowHTML(s, page * PAGE + i)).join('') || '<div class="notice">Rien à valider 🎉</div>'}
         </div>
@@ -62,8 +79,15 @@ export async function mount(el, { query }) {
   function rowHTML(s, idx) {
     const comp = getCompilation(s.compilationId);
     const miss = (v) => (v ? '' : ' vld-miss');
+    // An uncertain country looks filled-in, so mark the field and spell out what
+    // MusicBrainz was torn between — otherwise there's nothing to act on.
+    const doubt = isAmbiguous(s) ? ' vld-doubt' : '';
+    const alts = isAmbiguous(s) && s.geoAlternatives?.length
+      ? `<div class="vld-alts">Pays incertain — autres candidats : ${s.geoAlternatives.map(escape).join(' · ')}</div>`
+      : (isAmbiguous(s) ? '<div class="vld-alts">Pays incertain (homonymes sur MusicBrainz).</div>' : '');
     return `
-      <div class="vld-row" data-comp="${escape(s.compilationId)}" data-song="${escape(s.id)}" data-idx="${idx}">
+      <div class="vld-row${doubt}" data-comp="${escape(s.compilationId)}" data-song="${escape(s.id)}" data-idx="${idx}">
+        ${alts}
         <div class="vld-src">${escape(comp?.title || s.compilationId)}</div>
         <input class="vld-title${miss(s.title)}" data-f="title" value="${escape(s.title || '')}" placeholder="titre" aria-label="Titre">
         <input class="vld-artist${miss(s.artist)}" data-f="artist" value="${escape(s.artist || '')}" placeholder="artiste" aria-label="Artiste">
@@ -92,6 +116,10 @@ export async function mount(el, { query }) {
         artistCountryCode: code,
         artistRegion: val('region') || null,
         geoManual: true, // never auto-overwrite this correction
+        // Retire the provisional marker: this is now a human answer, so the row
+        // stops showing up here and stops being re-resolved by the backfill.
+        geoSource: 'manual',
+        geoAlternatives: null,
         metaManual: true,
         updatedAt: serverTimestamp(),
       };

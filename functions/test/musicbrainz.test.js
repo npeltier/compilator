@@ -6,7 +6,18 @@ const {
   classifyArea,
   lookupArtistGeo,
   lookupArtistByDiscogsId,
+  namesakeRivals,
+  describeCandidate,
 } = await import('../musicbrainz.js');
+
+// The real "Soapbox" search response: the Swedish band outscores the Glasgow one
+// that's actually on the compilation, which is why score alone can't be trusted.
+const SOAPBOX_RESULTS = [
+  { id: 'se', name: 'Soapbox', score: 100, country: 'SE', area: { name: 'Sweden' }, disambiguation: 'Swedish christian punk/metal band' },
+  { id: 'gb', name: 'SOAPBOX', score: 98, area: { name: 'Glasgow' }, disambiguation: 'Scottish punk band' },
+  { id: 'de', name: 'Soapbox', score: 97, country: 'DE', area: { name: 'Germany' }, disambiguation: 'German band' },
+  { id: 'sym', name: 'Soapbox Symphony', score: 89 },
+];
 
 describe('countryLabel', () => {
   test('maps ISO-3166-1 alpha-2 to an English name', () => {
@@ -124,6 +135,79 @@ describe('lookupArtistGeo', () => {
     expect(geo.country).toBe('France');
     expect(geo.countryCode).toBe('FR');
     expect(geo.region).toBeNull();
+  });
+
+  test('flags a near-tie between namesakes from different places', async () => {
+    global.fetch = jest.fn(async (url) => {
+      if (url.includes('/artist?query=')) return jsonRes({ artists: SOAPBOX_RESULTS });
+      throw new Error(`unexpected url ${url}`);
+    });
+    const geo = await lookupArtistGeo('SOAPBOX', { delayMs: 0 });
+    // Still returns the best guess — but marked, and with the rivals attached.
+    expect(geo.countryCode).toBe('SE');
+    expect(geo.ambiguous).toBe(true);
+    expect(geo.alternatives).toEqual([
+      'SOAPBOX — Glasgow (Scottish punk band)',
+      'Soapbox — Germany (German band)',
+    ]);
+  });
+
+  test('does not flag a clear winner', async () => {
+    global.fetch = jest.fn(async (url) => {
+      if (url.includes('/artist?query=')) {
+        return jsonRes({ artists: [
+          { id: 'a', name: 'Igorrr', score: 100, country: 'FR', area: { name: 'France' } },
+          { id: 'b', name: 'Igorrr', score: 82, country: 'BE', area: { name: 'Belgium' } },
+        ] });
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    const geo = await lookupArtistGeo('Igorrr', { delayMs: 0 });
+    expect(geo.countryCode).toBe('FR');
+    expect(geo.ambiguous).toBeUndefined();
+    expect(geo.alternatives).toBeUndefined();
+  });
+});
+
+describe('namesakeRivals', () => {
+  const rivalIds = (name, chosenId) => namesakeRivals(
+    SOAPBOX_RESULTS, name, SOAPBOX_RESULTS.find((a) => a.id === chosenId),
+  ).map((a) => a.id);
+
+  test('counts same-named near-ties pointing elsewhere', () => {
+    expect(rivalIds('Soapbox', 'se')).toEqual(['gb', 'de']);
+  });
+
+  test('ignores a different name, even at a close score', () => {
+    // "Soapbox Symphony" (89) is a different band, not a namesake.
+    expect(rivalIds('Soapbox', 'se')).not.toContain('sym');
+  });
+
+  test('ignores a namesake that agrees on the country', () => {
+    const results = [
+      { id: 'a', name: 'Trio', score: 100, country: 'DE', area: { name: 'Germany' } },
+      { id: 'b', name: 'Trio', score: 99, country: 'DE', area: { name: 'Germany' } },
+    ];
+    expect(namesakeRivals(results, 'Trio', results[0])).toEqual([]);
+  });
+
+  test('ignores a distant score and handles no candidates', () => {
+    const results = [
+      { id: 'a', name: 'Trio', score: 100, country: 'DE' },
+      { id: 'b', name: 'Trio', score: 60, country: 'US' },
+    ];
+    expect(namesakeRivals(results, 'Trio', results[0])).toEqual([]);
+    expect(namesakeRivals([], 'Trio', null)).toEqual([]);
+    expect(namesakeRivals(null, 'Trio', results[0])).toEqual([]);
+  });
+});
+
+describe('describeCandidate', () => {
+  test('prefers the area name, falls back to the country label', () => {
+    expect(describeCandidate({ name: 'SOAPBOX', area: { name: 'Glasgow' }, disambiguation: 'Scottish punk band' }))
+      .toBe('SOAPBOX — Glasgow (Scottish punk band)');
+    expect(describeCandidate({ name: 'Trio', country: 'DE' })).toBe('Trio — Germany');
+    expect(describeCandidate({ name: 'Nowhere' })).toBe('Nowhere — ?');
   });
 });
 

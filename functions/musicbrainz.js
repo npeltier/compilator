@@ -17,6 +17,11 @@ import { normalizeArtist } from './doublons.js';
 const MB_API = 'https://musicbrainz.org/ws/2';
 const USER_AGENT = 'Compilator/1.0 (+https://compilator-83816.web.app)';
 const MIN_SCORE = 90; // MB search score (0-100); below this a match is a guess
+// A rival namesake within this many points of the winner makes the pick a
+// coin-flip. Real case: "Soapbox" scores SE 100 / Glasgow 98 / DE 97 — the
+// search score reflects text similarity and popularity, not which band is on the
+// compilation, so we surface the tie instead of silently trusting the top hit.
+const AMBIGUITY_GAP = 5;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -69,6 +74,37 @@ export function pickArtist(results, name) {
   return best && best.score >= MIN_SCORE ? best.a : null;
 }
 
+/** Human-readable candidate label for the /validate screen: "SOAPBOX — Glasgow (Scottish punk band)". */
+export function describeCandidate(a) {
+  const where = a?.area?.name || countryLabel(a?.country) || '?';
+  const extra = a?.disambiguation ? ` (${a.disambiguation})` : '';
+  return `${a?.name || '?'} — ${where}${extra}`;
+}
+
+/**
+ * Rival candidates that make `chosen` a coin-flip: same name (true namesakes,
+ * not "Soapbox Symphony"), within AMBIGUITY_GAP points, and pointing at
+ * DIFFERENT geography — a near-tie that agrees on the country is harmless, since
+ * the country is all we store.
+ */
+export function namesakeRivals(results, name, chosen) {
+  if (!chosen) return [];
+  const target = normalizeArtist(name);
+  const floor = (Number(chosen.score) || 0) - AMBIGUITY_GAP;
+  const chosenCode = chosen.country || null;
+  const chosenArea = chosen.area?.name || null;
+  return (results || []).filter(Boolean).filter((a) => {
+    if (a === chosen || (a.id && a.id === chosen.id)) return false;
+    if (normalizeArtist(a.name) !== target) return false;
+    if ((Number(a.score) || 0) < floor) return false;
+    const code = a.country || null;
+    // Compare countries when both are known; otherwise fall back to area names
+    // (MB often leaves `country` empty but names the city, as with Glasgow).
+    if (code && chosenCode) return code !== chosenCode;
+    return (a.area?.name || '') !== (chosenArea || '');
+  });
+}
+
 /**
  * Reduce an MB area entity (plus its "part of" relations) to geo fields. An area
  * is a Country, a Subdivision (state/province), or a City/Municipality/District;
@@ -104,8 +140,13 @@ export function classifyArea(area) {
 
 /**
  * Look up an artist's geography on MusicBrainz. Returns
- *   { source:'musicbrainz', mbid, country, countryCode, region, regionCode, town }
+ *   { source:'musicbrainz', mbid, country, countryCode, region, regionCode, town,
+ *     ambiguous?, alternatives? }
  * or null when there's no confident match.
+ *
+ * `ambiguous` flags a near-tie between same-named artists from different places:
+ * the geo is our best guess, but a human should confirm it (see /validate). The
+ * rivals come out of the search response we already have — no extra request.
  *
  * Two requests: artist search (MBID + country) and a begin-area lookup with area
  * relations (subdivision + town). `delayMs` spaces them to respect the 1 req/s
@@ -117,7 +158,13 @@ export async function lookupArtistGeo(name, { delayMs = 1100 } = {}) {
   const search = await mbFetch(`/artist?query=${q}&limit=5&fmt=json`);
   const artist = pickArtist(search.artists, name);
   if (!artist) return null;
-  return geoFromArtist(artist, 'musicbrainz', { delayMs });
+  const rivals = namesakeRivals(search.artists, name, artist);
+  const geo = await geoFromArtist(artist, 'musicbrainz', { delayMs });
+  if (rivals.length) {
+    geo.ambiguous = true;
+    geo.alternatives = rivals.slice(0, 3).map(describeCandidate);
+  }
+  return geo;
 }
 
 /**

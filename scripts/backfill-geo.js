@@ -18,10 +18,20 @@
  * Usage:
  *   node scripts/backfill-geo.js            # fill missing geo for all songs
  *   node scripts/backfill-geo.js --force    # re-resolve even already-done songs
+ *   node scripts/backfill-geo.js --recheck=musicbrainz
+ *       # re-resolve only songs with these geoSource values, bypassing both the
+ *       # done check and the artistMeta cache. Use after a change to the
+ *       # resolution rules that affects one source — e.g. the namesake-ambiguity
+ *       # check, which only applies to bare 'musicbrainz' name matches. Far
+ *       # cheaper than --force (hundreds of artists, not thousands).
  */
 import admin from 'firebase-admin';
 
 const FORCE = process.argv.includes('--force');
+const RECHECK = new Set(
+  (process.argv.find((a) => a.startsWith('--recheck='))?.slice('--recheck='.length) || '')
+    .split(',').map((s) => s.trim()).filter(Boolean),
+);
 const PROJECT = process.env.GCLOUD_PROJECT || 'compilator-83816';
 const BUCKET = process.env.STORAGE_BUCKET || `${PROJECT}.appspot.com`;
 
@@ -43,27 +53,32 @@ const db = admin.firestore();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function run() {
-  console.log(`Project: ${PROJECT}${FORCE ? ' — FORCE' : ''}`);
+  console.log(`Project: ${PROJECT}${FORCE ? ' — FORCE' : ''}${RECHECK.size ? ` — RECHECK ${[...RECHECK].join(',')}` : ''}`);
   const songs = await db.collectionGroup('songs').get();
   console.log(`Scanning ${songs.size} song(s)…`);
 
   // Group by the SAME key the cache uses — Discogs artist id when present, else
   // normalized name — so distinct same-named artists resolve separately. Skip
   // songs a human has corrected (geoManual) and those already at this version.
-  const byArtist = new Map(); // key → { raw, discogsArtistId, refs: [DocRef] }
+  const byArtist = new Map(); // key → { raw, discogsArtistId, force, refs: [DocRef] }
   for (const d of songs.docs) {
     const s = d.data();
     const raw = s.artist;
     const name = normalizeArtist(raw);
     if (!name || isVariousArtist(raw)) continue;
     if (s.geoManual) continue; // never overwrite a manual correction
-    // Note: NOT `geoV === GEO_VERSION` — a song whose lookup came back 'none' is
-    // retried on every run rather than retired at the current version.
-    if (!FORCE && isGeoResolved(s)) continue;
+    // A --recheck target is re-resolved even though it looks done, and must also
+    // bypass the artistMeta cache (which would hand back the very answer we're
+    // rechecking) — hence the per-artist force below.
+    const recheck = RECHECK.has(s.geoSource || 'none');
+    // Note: NOT `geoV === GEO_VERSION` — a song whose lookup came back 'none' or
+    // ambiguous is retried on every run rather than retired at the current version.
+    if (!FORCE && !recheck && isGeoResolved(s)) continue;
     const discogsArtistId = s.discogs?.artistId || null;
     const key = discogsArtistId ? `discogs-${discogsArtistId}` : name;
     let g = byArtist.get(key);
-    if (!g) { g = { raw, discogsArtistId, refs: [] }; byArtist.set(key, g); }
+    if (!g) { g = { raw, discogsArtistId, force: false, refs: [] }; byArtist.set(key, g); }
+    g.force ||= recheck;
     g.refs.push(d.ref);
   }
   console.log(`${byArtist.size} unique artist(s) need resolution.\n`);
@@ -71,9 +86,9 @@ async function run() {
   let resolved = 0;
   let withCountry = 0;
   let songsWritten = 0;
-  for (const [, { raw, discogsArtistId, refs }] of byArtist) {
+  for (const [, { raw, discogsArtistId, force, refs }] of byArtist) {
     try {
-      const geo = await resolveArtistGeo(db, raw, { discogsArtistId, delayMs: 1100, force: FORCE });
+      const geo = await resolveArtistGeo(db, raw, { discogsArtistId, delayMs: 1100, force: FORCE || force });
       resolved += 1;
       if (geo?.countryCode || geo?.country) withCountry += 1;
       const fields = geoSongFields(geo);

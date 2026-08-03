@@ -1482,6 +1482,11 @@ body.pf-open { overflow: hidden; }
   border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 13px; min-width: 0;
 }
 .vld-row .vld-miss { border-color: var(--accent); }
+/* Uncertain country: the field looks filled in, so flag the row and its select
+   with the softer accent — a doubt, not a hole like .vld-miss. */
+.vld-row.vld-doubt { border-color: var(--accent-soft); }
+.vld-row.vld-doubt select { border-color: var(--accent-soft); }
+.vld-alts { grid-column: 1 / -1; font-size: 12px; color: var(--ink-dim); }
 .vld-row .vld-save { padding: 6px 12px; font-size: 12px; white-space: nowrap; }
 .vld-status { font-size: 14px; min-width: 20px; color: var(--ink-dim); }
 .vld-pager { display: flex; align-items: center; justify-content: center; gap: 16px; margin: 20px 0; color: var(--ink-dim); font-size: 13px; }

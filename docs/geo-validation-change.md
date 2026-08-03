@@ -29,10 +29,53 @@ Key detail: the **artist cache is now keyed by Discogs id** (`artistMeta/discogs
 
 `year → decade` is sanitized at read time in `catalog.js` (`yearOf`): a plausible 4-digit year, or the leading 4 digits of a mashed date; junk is dropped. (This only cleans it for display/map; the stored field is still dirty — a `year` cleanup backfill is a possible future task.)
 
+## When MusicBrainz can't tell namesakes apart
+The Discogs-id path above only works when the song HAS a `discogs.artistId` —
+about 1129 songs are `enrichStatus: 'nomatch'` (Discogs found no release), so they
+fall through to a bare name search with nothing to corroborate it. The search
+score reflects text similarity and popularity, not which band is on the
+compilation:
+
+```
+100  Soapbox   country=SE  area=Sweden    Swedish christian punk/metal band   ← picked
+ 98  SOAPBOX   country=-   area=Glasgow   Scottish punk band                  ← the real one
+ 97  Soapbox   country=DE  area=Germany   German band
+```
+
+So a near-tie is now recorded as **provisional** rather than as fact:
+
+- `namesakeRivals()` (`functions/musicbrainz.js`) finds candidates that are the
+  **same name** (not "Soapbox Symphony"), within **5 score points**, and pointing
+  at **different geography** — a near-tie that agrees on the country is harmless.
+  It reads the search response we already have, so it costs no extra request.
+- Those get `geoSource: '`**`musicbrainz-ambiguous`**`'` plus `geoAlternatives`
+  (up to 3 human-readable rivals, e.g. `SOAPBOX — Glasgow (Scottish punk band)`).
+  The best guess is still stored, so the map isn't left blank.
+- A **Discogs bio that corroborates** the pick settles the tie — source goes back
+  to plain `musicbrainz`.
+- Ambiguous is **not resolved** (see below), so it's retried *and* surfaced in
+  `/validate` with the alternatives spelled out on the row.
+
+## `geoV` vs. resolved — the retry rule
+`geoV` records which pipeline version last **touched** a doc; it does NOT mean the
+lookup succeeded. Done-ness is `isGeoResolved(doc)` in `functions/geo.js`:
+
+> at the current `GEO_VERSION` **and** the source is not provisional
+> (`'none'` or `'musicbrainz-ambiguous'`).
+
+Both "already resolved?" checks go through it — the `artistMeta` cache freshness
+test and the song skip in `scripts/backfill-geo.js`. Before this, a failed lookup
+was stamped `geoV: 2` and skipped forever; 612 songs sat at `geoSource: 'none'`.
+The trade-off: unresolvable artists (~20%) are re-attempted on every run.
+
+`--recheck=<geoSource,…>` re-resolves only songs with the given sources, bypassing
+both the done check and the cache — for applying a rule change to one source
+without a full `--force`.
+
 ## Manual correction
-- **Admin screen `/validate`** (`public/js/views/validate.js`, admin-only, in the nav as "À valider"): lists every song missing **title / artist / year / country**, inline-editable, paginated (40/page). Saves write straight to the song doc.
+- **Admin screen `/validate`** (`public/js/views/validate.js`, admin-only, in the nav as "À valider"): lists every song missing **title / artist / year / country**, *plus* every song whose country is **uncertain** (`musicbrainz-ambiguous`, sorted first, row outlined in `--accent-soft`, rival candidates printed above the fields). Inline-editable, paginated (40/page). Saves write straight to the song doc.
 - **Authors** can edit **year, country, region** per song in the **compilation editor** (edit mode → new fields under title/artist).
-- Both stamp **`geoManual: true`** on the song. The geo backfill and the enrichment path **skip `geoManual` songs**, so a human fix is never overwritten.
+- Both stamp **`geoManual: true`** and **`geoSource: 'manual'`** on the song (clearing `geoAlternatives`), so the row leaves `/validate` and stops being re-resolved. The geo backfill and the enrichment path **skip `geoManual` songs**, so a human fix is never overwritten.
 - Country picker uses a shared helper `public/js/countries.js` (ISO-3166-1 alpha-2 → English name, from the `i18n-iso-countries` dataset the map already uses). Stores both `artistCountry` (label) and `artistCountryCode` (ISO-2, which the map colours by).
 
 Firestore rules already allow the compilation author (or an admin) to write song docs — no rules change needed.
@@ -55,7 +98,8 @@ Firestore rules already allow the compilation author (or an admin) to write song
 - `public/css/app.css` — `/validate` + `.ed-meta` styles.
 
 ## Status
-- Functions unit tests: **57/57**.
+- Functions unit tests: **76/76** (was 57; `functions/test/geo.test.js` is new —
+  `resolveArtistGeo` had no coverage at all).
 - Full e2e chain (seed → e2e → ui → player → upload-draft): **green**.
 - Committed & pushed to `main` (CI auto-deploys on green).
 
@@ -74,6 +118,15 @@ Firestore rules already allow the compilation author (or an admin) to write song
      `new Date()` for `resolvedAt` (write-only metadata; wall-clock is fine). Keep it
      that way if you add more shared-module writes.
 2. **Spot-check** the four reported cases (Taxi, Trio, EV, Soapbox) after the re-run, and try `/validate` + an author editing year/country in a compilation.
+   - Taxi / Trio / EV all have a `discogs.artistId` **and** a bio naming the right
+     country, so the Discogs-id path should fix them.
+   - **Soapbox can't be fixed automatically**: `enrichStatus: 'nomatch'` → no
+     Discogs id, no bio, and the Glasgow band loses the MB score contest 98–100.
+     It's now flagged `musicbrainz-ambiguous` for a human call in `/validate`.
+3. **Re-run with `--recheck=musicbrainz`** (~25 min, a few hundred artists) once the
+   full v2 backfill is done. The full run predates the ambiguity check, so its bare
+   name matches are stamped plain `'musicbrainz'` and count as resolved; this pass
+   re-examines exactly those and flags the coin-flips.
 
 ## How to run things
 - Dev app (Firebase emulators + hosting on `localhost:5050`, login `peltier.nicolas@gmail.com` / `password`): `npm run dev`

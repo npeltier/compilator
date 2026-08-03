@@ -17,19 +17,28 @@ import { lookupArtistGeo, lookupArtistByDiscogsId } from './musicbrainz.js';
 // v2: Discogs-id disambiguation (exact MB artist via the Discogs URL relation).
 export const GEO_VERSION = 2;
 
+// A name match that MusicBrainz can't tell apart from a same-named artist
+// somewhere else: we store our best guess but mark it, so it shows up in
+// /validate for a human call instead of passing as fact.
+export const AMBIGUOUS_SOURCE = 'musicbrainz-ambiguous';
+
+// Sources that are NOT a settled answer — a provisional doc is always re-tried.
+const PROVISIONAL_SOURCES = new Set(['none', AMBIGUOUS_SOURCE]);
+
 // `geoV` records which pipeline version last TOUCHED a doc — it does not mean the
-// lookup succeeded. Done-ness is "at the current version AND we actually found
-// something", i.e. a `'none'` result is never done: an artist that failed to
-// resolve (no Discogs id, MusicBrainz down, a `nomatch` release with no bio to
-// fall back on) stays eligible for a retry on the next run instead of being
-// retired forever. Both "already resolved?" checks — the artistMeta cache below
-// and the song skip in scripts/backfill-geo.js — go through this.
+// lookup succeeded. Done-ness is "at the current version AND we actually settled
+// on something", i.e. a `'none'` or ambiguous result is never done: an artist
+// that failed to resolve (no Discogs id, MusicBrainz down, a `nomatch` release
+// with no bio to fall back on) or resolved to a coin-flip stays eligible for a
+// retry on the next run instead of being retired forever. Both "already
+// resolved?" checks — the artistMeta cache below and the song skip in
+// scripts/backfill-geo.js — go through this.
 // Cache docs name the field `source`, song docs `geoSource`; a doc carrying
 // neither isn't ours, so treat it as unresolved (a wasted retry beats a
 // permanently stranded song).
 export function isGeoResolved(doc) {
   if (!doc || doc.geoV !== GEO_VERSION) return false;
-  return (doc.source ?? doc.geoSource ?? 'none') !== 'none';
+  return !PROVISIONAL_SOURCES.has(doc.source ?? doc.geoSource ?? 'none');
 }
 
 // A Firestore-doc-id-safe key for an artist. normalizeArtist only lowercases +
@@ -89,7 +98,13 @@ export async function resolveArtistGeo(db, artist, {
       const byName = await lookupArtistGeo(artist, { delayMs });
       if (byName?.countryCode) {
         const bio = discogsFallback?.artistCountry;
-        if (!bio || countriesAgree(byName.country, bio)) geo = byName;
+        if (bio && countriesAgree(byName.country, bio)) {
+          // The Discogs bio independently corroborates the pick, so a namesake
+          // tie no longer matters — this is a settled answer.
+          geo = { ...byName, ambiguous: false, alternatives: null };
+        } else if (!bio) {
+          geo = byName;
+        }
         // else: distrust the ambiguous name match; fall through to the bio below.
       }
     }
@@ -117,7 +132,10 @@ export async function resolveArtistGeo(db, artist, {
     region: geo?.region || null,
     regionCode: geo?.regionCode || null,
     town: geo?.town || null,
-    source: geo?.source || 'none',
+    // An unconfirmed namesake tie is recorded as provisional, keeping the guess
+    // (better than a blank map) while marking it for /validate and for retry.
+    source: geo?.ambiguous ? AMBIGUOUS_SOURCE : (geo?.source || 'none'),
+    alternatives: geo?.alternatives || null,
     mbid: geo?.mbid || null,
     geoV: GEO_VERSION,
     // Plain Date (→ Firestore Timestamp) rather than a serverTimestamp() sentinel:
@@ -138,7 +156,9 @@ export function geoSongFields(geo) {
     artistRegion: geo?.region || null,
     artistRegionCode: geo?.regionCode || null,
     artistTown: geo?.town || null,
-    geoSource: geo?.source || 'none',
+    geoSource: geo?.ambiguous ? AMBIGUOUS_SOURCE : (geo?.source || 'none'),
+    // The rival namesakes, so /validate can show an admin what to choose between.
+    geoAlternatives: geo?.alternatives || null,
     geoV: GEO_VERSION,
   };
 }

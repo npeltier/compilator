@@ -5,7 +5,9 @@ const lookupArtistGeo = jest.fn();
 const lookupArtistByDiscogsId = jest.fn();
 jest.unstable_mockModule('../musicbrainz.js', () => ({ lookupArtistGeo, lookupArtistByDiscogsId }));
 
-const { resolveArtistGeo, geoSongFields, isGeoResolved, GEO_VERSION } = await import('../geo.js');
+const {
+  resolveArtistGeo, geoSongFields, isGeoResolved, GEO_VERSION, AMBIGUOUS_SOURCE,
+} = await import('../geo.js');
 
 // Minimal Firestore stand-in: artistMeta docs live in `docs`, keyed by doc id.
 function mkDb(docs = {}) {
@@ -68,6 +70,59 @@ describe('resolveArtistGeo cache freshness', () => {
     expect(geo.source).toBe('none');
     expect(isGeoResolved(geo)).toBe(false);
     expect(isGeoResolved(geoSongFields(geo))).toBe(false);
+  });
+});
+
+describe('ambiguous name matches', () => {
+  // What MusicBrainz gives us for "SOAPBOX": Sweden wins on score, Glasgow is the
+  // real band, and there's no Discogs id to settle it (the release was a nomatch).
+  const AMBIGUOUS_HIT = {
+    source: 'musicbrainz', mbid: 'se', country: 'Sweden', countryCode: 'SE',
+    region: 'Stockholms län', regionCode: null, town: null,
+    ambiguous: true, alternatives: ['SOAPBOX — Glasgow (Scottish punk band)'],
+  };
+
+  test('records the guess as provisional, with the rivals, and stays retryable', async () => {
+    const db = mkDb();
+    lookupArtistGeo.mockResolvedValue(AMBIGUOUS_HIT);
+    const geo = await resolveArtistGeo(db, 'SOAPBOX');
+
+    expect(geo.countryCode).toBe('SE'); // best guess is still stored
+    expect(geo.source).toBe(AMBIGUOUS_SOURCE);
+    expect(geo.alternatives).toEqual(['SOAPBOX — Glasgow (Scottish punk band)']);
+    expect(isGeoResolved(geo)).toBe(false); // → re-resolved on the next run
+
+    const fields = geoSongFields(geo);
+    expect(fields.geoSource).toBe(AMBIGUOUS_SOURCE);
+    expect(fields.geoAlternatives).toEqual(['SOAPBOX — Glasgow (Scottish punk band)']);
+    expect(isGeoResolved(fields)).toBe(false); // → shows up in /validate
+  });
+
+  test('a cached ambiguous entry is retried, not served', async () => {
+    const db = mkDb({ soapbox: { artist: 'SOAPBOX', countryCode: 'SE', source: AMBIGUOUS_SOURCE, geoV: GEO_VERSION } });
+    lookupArtistGeo.mockResolvedValue({ source: 'musicbrainz', mbid: 'gb', country: 'United Kingdom', countryCode: 'GB' });
+    const geo = await resolveArtistGeo(db, 'SOAPBOX');
+    expect(lookupArtistGeo).toHaveBeenCalled();
+    expect(geo.countryCode).toBe('GB');
+    expect(geo.source).toBe('musicbrainz');
+  });
+
+  test('a corroborating Discogs bio settles the tie', async () => {
+    const db = mkDb();
+    lookupArtistGeo.mockResolvedValue({ ...AMBIGUOUS_HIT, country: 'Peru', countryCode: 'PE' });
+    const geo = await resolveArtistGeo(db, 'Taxi', { discogsFallback: { artistCountry: 'Peru' } });
+    expect(geo.source).toBe('musicbrainz'); // no longer provisional
+    expect(geo.alternatives).toBeNull();
+    expect(isGeoResolved(geo)).toBe(true);
+  });
+
+  test('a contradicting Discogs bio wins over the name match', async () => {
+    const db = mkDb();
+    lookupArtistGeo.mockResolvedValue({ ...AMBIGUOUS_HIT, country: 'Romania', countryCode: 'RO' });
+    const geo = await resolveArtistGeo(db, 'Taxi', { discogsFallback: { artistCountry: 'Peru', artistTown: 'Chimbote' } });
+    expect(geo.source).toBe('discogs-bio');
+    expect(geo.country).toBe('Peru');
+    expect(geo.town).toBe('Chimbote');
   });
 });
 
