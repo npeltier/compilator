@@ -855,14 +855,13 @@ body.pf-open { overflow: hidden; }
 .player-full .pf-actions #pf-cast.active { color: var(--accent); }
 
 /* screen 2 — metadata */
-.player-full .pf-meta { width: 100%; max-width: 520px; }
+/* auto block margins (not justify-content) so a short panel sits centred in the
+   tall desktop screen, while a long one still scrolls from its top instead of
+   having the overflow clipped. */
+.player-full .pf-meta { width: 100%; max-width: 520px; margin: auto 0; }
 .player-full .pf-meta-empty { color: var(--ink-faint); font-style: italic; text-align: center; margin-top: 40px; }
-.player-full .pf-meta .tk-info { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 14px; color: var(--ink-faint); }
-.player-full .pf-meta .tk-facts { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
-.player-full .pf-meta .tk-discogs { color: var(--ink-dim); text-decoration: none; border-bottom: 1px solid transparent; }
-.player-full .pf-meta .tk-discogs:hover { color: var(--accent); border-bottom-color: var(--accent); }
-.player-full .pf-meta .tk-bio { margin-top: 14px; font-size: 14px; line-height: 1.6; color: var(--ink-dim); white-space: pre-line; }
-.player-full .pf-meta .tk-doublons { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+/* The detail screen renders .pfd (see "player: detail screen" below); the .tk-*
+   enrichment line is the compilation page's inline variant. */
 
 .player-full .pf-dots {
   display: flex;
@@ -881,15 +880,28 @@ body.pf-open { overflow: hidden; }
 }
 .player-full .pf-dot.active { opacity: 1; background: var(--accent); }
 
-/* Desktop: only the cover view. The second screen (bio/Discogs/duplicates)
-   lives on the compilation page; hide it and its navigation here. */
-@media (min-width: 721px) {
-  .player-full .pf-screen-2,
-  .player-full .pf-arrow,
-  .player-full .pf-dots { display: none; }
-  .player-full .pf-track { width: 100%; }
-  .player-full .pf-screen-1 { width: 100%; flex: 0 0 100%; }
+/* -------- player: detail screen (artist + track) -------- */
+.pfd { width: 100%; display: flex; flex-direction: column; gap: 26px; }
+.pfd-block { display: flex; flex-direction: column; gap: 8px; }
+.pfd-h {
+  margin: 0; font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.14em; color: var(--ink-faint);
 }
+.pfd-name { font-size: 20px; font-weight: 600; color: var(--ink); }
+/* Label column sized to the longest label ("Compilation") so the values line up. */
+.pfd-rows {
+  margin: 0; display: grid; grid-template-columns: minmax(0, 104px) 1fr;
+  gap: 6px 14px; font-size: 14px;
+}
+.pfd-rows dt { color: var(--ink-faint); }
+.pfd-rows dd { margin: 0; color: var(--ink-dim); min-width: 0; overflow-wrap: anywhere; }
+.pfd-rows a { color: var(--ink-dim); text-decoration: none; border-bottom: 1px solid transparent; }
+.pfd-rows a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+.pfd-bio {
+  margin: 6px 0 0; font-size: 14px; line-height: 1.6;
+  color: var(--ink-dim); white-space: pre-line;
+}
+.pfd .tk-doublons { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 2px; }
 
 /* -------- shuffle row (home) -------- */
 .shuffle-row {

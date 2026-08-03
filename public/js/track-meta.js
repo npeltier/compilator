@@ -55,6 +55,74 @@ export async function paintDoublonCovers(rootEl) {
   }));
 }
 
+const DISCOGS_ARTIST = (id) => `https://www.discogs.com/artist/${encodeURIComponent(id)}`;
+
+function mmss(secs) {
+  const n = Math.round(Number(secs) || 0);
+  if (!n) return '';
+  return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`;
+}
+
+// One <dt>/<dd> pair, skipped entirely when there's no value — so the panel never
+// shows an empty label for data we don't have.
+function row(label, valueHTML) {
+  return valueHTML ? `<dt>${escape(label)}</dt><dd>${valueHTML}</dd>` : '';
+}
+
+/**
+ * The full detail panel for a track: everything we know about the artist (origin,
+ * Discogs page, bio) and the recording (compilation, year, label, track, length,
+ * Discogs release), plus the duplicate chips. Drives the player's second screen.
+ *
+ * Takes a catalog song doc. Sections with no data are omitted rather than shown
+ * empty, so a barely-enriched track degrades to just its title.
+ */
+export function artistDetailHTML(song, { compilationId = null } = {}) {
+  if (!song) return '';
+
+  const place = [song.artistTown, song.artistRegion, song.artistCountry].filter(Boolean).join(', ');
+  const artistRows = [
+    row('Origine', place ? escape(place) : ''),
+    row('Discogs', song.discogs?.artistId
+      ? `<a href="${escape(DISCOGS_ARTIST(song.discogs.artistId))}" target="_blank" rel="noopener">Page artiste ↗</a>`
+      : ''),
+  ].join('');
+  const bio = song.artistBio ? `<p class="pfd-bio">${escape(song.artistBio)}</p>` : '';
+  const artistBlock = (song.artist || artistRows || bio)
+    ? `<section class="pfd-block">
+         <h3 class="pfd-h">Artiste</h3>
+         ${song.artist ? `<div class="pfd-name">${escape(song.artist)}</div>` : ''}
+         ${artistRows ? `<dl class="pfd-rows">${artistRows}</dl>` : ''}
+         ${bio}
+       </section>`
+    : '';
+
+  const comp = compilationId ? getCompilation(compilationId) : null;
+  const trackRows = [
+    row('Compilation', comp
+      ? `<a href="/c/${escape(compilationId)}">${escape(comp.title || compilationId)}</a>`
+      : ''),
+    row('Année', song.year ? escape(String(song.year)) : ''),
+    row('Label', song.label ? escape(song.label) : ''),
+    row('Piste', song.track ? escape(String(song.track)) : ''),
+    row('Durée', escape(mmss(song.duration))),
+    row('Disque', song.discogs?.releaseUrl
+      ? `<a href="${escape(song.discogs.releaseUrl)}" target="_blank" rel="noopener">Discogs ↗</a>`
+      : ''),
+  ].join('');
+  const trackBlock = trackRows
+    ? `<section class="pfd-block"><h3 class="pfd-h">Morceau</h3><dl class="pfd-rows">${trackRows}</dl></section>`
+    : '';
+
+  const chips = doublonChipsHTML(song.doublons, compilationId);
+  const chipsBlock = chips
+    ? `<section class="pfd-block"><h3 class="pfd-h">Aussi dans</h3>${chips}</section>`
+    : '';
+
+  if (!artistBlock && !trackBlock && !chipsBlock) return '';
+  return `<div class="pfd">${artistBlock}${trackBlock}${chipsBlock}</div>`;
+}
+
 // Discogs enrichment line: facts (year · label · town, country), a link to the
 // release page, and the artist bio. Returns '' when the track carries none.
 //

@@ -21,7 +21,7 @@ import { createReactionControl } from './reaction-control.js';
 import { coverUrl } from './image-url.js';
 import { navigate } from './router.js';
 import { ensureSongsLoaded, getSong } from './catalog.js';
-import { doublonChipsHTML, enrichFactsHTML, paintDoublonCovers } from './track-meta.js';
+import { artistDetailHTML, paintDoublonCovers } from './track-meta.js';
 import {
   initCast, isCasting, requestCastSession, castTrack, castPlayPause, castSeek,
 } from './cast.js';
@@ -400,7 +400,9 @@ async function applyCover(track) {
 // ---- full-screen overlay ----
 // An immersive view over the current track, sharing the same `audio`/`queue`
 // state as the bar. Screen 1: cover, title, artist, reactions, transport.
-// Screen 2: Discogs facts/link, artist bio, duplicate compilations.
+// Screen 2: artist detail (origin, Discogs page, bio) + track detail (compilation,
+// year, label, track no., length, release link) + duplicate compilations.
+// Both screens exist at every width — arrows on desktop, swipe + dots on phones.
 let fsEl = null;
 let fsOpen = false;
 let fsScreen = 0; // 0 = cover, 1 = details
@@ -514,9 +516,10 @@ function buildFullscreen() {
   window.addEventListener('resize', () => { if (fsOpen) goScreen(fsScreen); });
 }
 
-// The second screen exists on phones only; desktop shows the cover view alone.
+// Two screens everywhere: the cover/transport view and the detail view. Desktop
+// used to stop at screen 0 because the details were only on the compilation page.
 function maxScreen() {
-  return window.matchMedia('(max-width: 720px)').matches ? 1 : 0;
+  return 1;
 }
 
 function goScreen(i) {
@@ -590,27 +593,15 @@ async function updateFullscreen() {
     pfRxControl.refresh();
   }
 
-  // Screen 2: Discogs facts/link, bio, doublons — looked up from the catalog by
+  // Screen 2: the full artist/track detail panel — looked up from the catalog by
   // songId (the queue track may lack enrichment when built outside compilation view).
   const meta = fsEl.querySelector('#pf-meta');
   pfMetaSongId = t.songId;
   meta.innerHTML = '<div class="pf-meta-empty">…</div>';
   await ensureSongsLoaded();
   if (pfMetaSongId !== t.songId || !fsOpen) return;
-  const song = getSong(t.songId);
-  const facts = song ? enrichFactsHTML({
-    year: song.year,
-    label: song.label,
-    artistTown: song.artistTown,
-    artistRegion: song.artistRegion,
-    artistCountry: song.artistCountry,
-    artistBio: song.artistBio,
-    discogsUrl: song.discogs?.releaseUrl || null,
-  }, { bio: 'block' }) : '';
-  const chips = song ? doublonChipsHTML(song.doublons, t.compilationId) : '';
-  meta.innerHTML = (facts || chips)
-    ? `${facts}${chips}`
-    : '<div class="pf-meta-empty">Aucune information supplémentaire pour ce morceau.</div>';
+  const detail = artistDetailHTML(getSong(t.songId), { compilationId: t.compilationId });
+  meta.innerHTML = detail || '<div class="pf-meta-empty">Aucune information supplémentaire pour ce morceau.</div>';
   paintDoublonCovers(meta);
 }
 

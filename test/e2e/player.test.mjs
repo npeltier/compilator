@@ -34,8 +34,24 @@ const AUTHOR_NAME = 'Ptestcomposer';
 const COMP1 = { id: 'ptestCompOne', title: 'PTEST Alpha Mix' };
 const COMP2 = { id: 'ptestCompTwo', title: 'PTEST Beta Mix' };
 // Distinct song + artist names so each search query matches exactly one result.
+// The first song carries full enrichment so the detail screen has something to
+// show (origin, Discogs links, bio, label, track no.).
 const COMP1_SONGS = [
-  { title: 'PTEST Song One', artist: 'Marin' },
+  {
+    title: 'PTEST Song One',
+    artist: 'Marin',
+    enrichment: {
+      year: 1978,
+      label: 'PTEST Records',
+      track: 4,
+      artistTown: 'Brest',
+      artistRegion: 'Bretagne',
+      artistCountry: 'France',
+      artistCountryCode: 'FR',
+      artistBio: 'PTEST bio: un groupe imaginaire de Brest.',
+      discogs: { artistId: 424242, releaseId: 999, releaseUrl: 'https://www.discogs.com/release/999' },
+    },
+  },
   { title: 'PTEST Song Two', artist: 'Lazare' },
   { title: 'PTEST Song Three', artist: 'Odette' },
 ];
@@ -65,6 +81,17 @@ function sineWav(freq, seconds = 2, sampleRate = 8000) {
   return buf;
 }
 
+// Wait for enrichSongOnCreate to stamp enrichStatus (it always does, even when it
+// skips or errors), then write the fixture fields so ours are the last word.
+async function settleThenPatch(ref, fields) {
+  for (let i = 0; i < 80; i++) {
+    const snap = await ref.get();
+    if (snap.exists && snap.data().enrichStatus) break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  await ref.set(fields, { merge: true });
+}
+
 async function seedComp(comp, songs, freqBase) {
   await db.collection('compilations').doc(comp.id).set({
     title: comp.title, author: AUTHOR, season: 'ete', year: 2025, status: 'published',
@@ -78,10 +105,16 @@ async function seedComp(comp, songs, freqBase) {
       metadata: { contentType: 'audio/wav' }, resumable: false,
     });
     uploadedPaths.push(storagePath);
-    await db.collection('compilations').doc(comp.id).collection('songs').doc(`${comp.id}_s${order}`).set({
+    const songRef = db.collection('compilations').doc(comp.id).collection('songs').doc(`${comp.id}_s${order}`);
+    await songRef.set({
       title: s.title, artist: s.artist, album: comp.id, order, storagePath,
       duration: 2, addedAt: FV.serverTimestamp(),
     });
+    // enrichSongOnCreate fires on that write and merges its own geo fields in —
+    // nulls here, since the emulator has no Discogs token and MusicBrainz won't
+    // know these made-up artists. It would clobber our fixture values, so wait
+    // for the trigger to land before writing them.
+    if (s.enrichment) await settleThenPatch(songRef, s.enrichment);
     order += 1;
   }
 }
@@ -191,6 +224,47 @@ async function run() {
     await page.click('#pf-prev');
     await waitTitle('PTEST Song One');
     ok('prev → "PTEST Song One"');
+
+    step('detail screen (2nd screen) is reachable at desktop width and shows artist + track detail');
+    // This viewport is desktop-width: the second screen used to be phone-only.
+    await page.click('#pf-next-screen');
+    await page.waitForSelector('.player-full:not([hidden]) .pfd', { timeout: 20000 });
+    const detail = await page.textContent('#pf-meta');
+    for (const expected of [
+      'Marin',                                    // artist name
+      'Brest, Bretagne, France',                  // origin, town → region → country
+      'PTEST bio: un groupe imaginaire de Brest.',// bio in full
+      'PTEST Records',                            // label
+      'PTEST Alpha Mix',                          // the compilation it came from
+      '1978',                                     // year
+    ]) {
+      assert.ok(detail.includes(expected), `detail screen should mention "${expected}", got: ${detail}`);
+    }
+    const artistHref = await page.getAttribute('#pf-meta a[href*="/artist/424242"]', 'href');
+    assert.ok(artistHref, 'detail screen should link to the Discogs ARTIST page');
+    assert.ok(
+      await page.getAttribute('#pf-meta a[href*="/release/999"]', 'href'),
+      'detail screen should link to the Discogs RELEASE page',
+    );
+    ok('detail screen shows origin, bio, label, compilation + both Discogs links');
+
+    // Switching track repaints the panel for the new song (guarded by pfMetaSongId).
+    // The transport lives on screen 1, which is translated out of the viewport
+    // while screen 2 is showing — so step back before using it.
+    await page.click('#pf-prev-screen');
+    await page.click('#pf-next');
+    await waitTitle('PTEST Song Two');
+    await page.click('#pf-next-screen');
+    await page.waitForFunction(
+      () => !document.querySelector('#pf-meta')?.textContent.includes('PTEST bio'),
+      { timeout: 20000 },
+    );
+    ok('detail screen repaints on track change (Song Two has no enrichment)');
+
+    // Back to screen 1 / Song One so the remaining steps start where they used to.
+    await page.click('#pf-prev-screen');
+    await page.click('#pf-prev');
+    await waitTitle('PTEST Song One');
     await page.click('#pf-min'); // collapse back to the bar
     await page.waitForSelector('.player-full', { state: 'hidden', timeout: 20000 });
 
