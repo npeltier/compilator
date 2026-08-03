@@ -9,7 +9,6 @@
 // Takes a firebase-admin Firestore handle as a parameter (no admin import here),
 // mirroring discogs.js so it stays easy to reuse and test.
 
-import { FieldValue } from 'firebase-admin/firestore';
 import { normalizeArtist } from './doublons.js';
 import { lookupArtistGeo, lookupArtistByDiscogsId } from './musicbrainz.js';
 
@@ -106,7 +105,11 @@ export async function resolveArtistGeo(db, artist, {
     source: geo?.source || 'none',
     mbid: geo?.mbid || null,
     geoV: GEO_VERSION,
-    resolvedAt: FieldValue.serverTimestamp(),
+    // Plain Date (→ Firestore Timestamp) rather than a serverTimestamp() sentinel:
+    // this module is imported by both the Cloud Function and the backfill script,
+    // which load different firebase-admin copies, and a cross-copy sentinel fails
+    // to serialize. resolvedAt is write-only metadata, so wall-clock time is fine.
+    resolvedAt: new Date(),
   };
   await ref.set(data, { merge: true });
   return data;

@@ -63,9 +63,16 @@ Firestore rules already allow the compilation author (or an admin) to write song
 1. **Re-run the geo backfill (v2)** against prod to correct existing data (Taxi/Trio/EV/Soapbox …) and fill blanks — it re-resolves everything because `GEO_VERSION` changed, and skips `geoManual` songs:
    ```bash
    gcloud auth application-default login        # once
-   node scripts/backfill-geo.js                 # ~1h, respects MusicBrainz 1 req/s
+   node scripts/backfill-geo.js                 # ~2-3h, respects MusicBrainz 1 req/s
    ```
    - ⚠️ On the *current* machine, node couldn't complete the OAuth token exchange (a local DLP layer severs the POST to `oauth2.googleapis.com`), so the backfills there ran via a throwaway `curl`-based runner in `scripts/.tmp-*.mjs`. On a normal machine `scripts/backfill-geo.js` should work directly. If you hit the same "Premature close" error, reuse the curl-runner trick (mint tokens with `gcloud`, do Firestore/Storage over REST).
+   - ✅ **Done 2026-08-03** (3652 artists). First attempt failed on *every* artist with
+     `Couldn't serialize object of type "ServerTimestampTransform"`: `geo.js` is imported
+     by the backfill through the *root* `node_modules/firebase-admin`, while its
+     `FieldValue.serverTimestamp()` sentinel came from `functions/node_modules` — a
+     cross-copy sentinel Firestore refuses to serialize. Fixed by writing a plain
+     `new Date()` for `resolvedAt` (write-only metadata; wall-clock is fine). Keep it
+     that way if you add more shared-module writes.
 2. **Spot-check** the four reported cases (Taxi, Trio, EV, Soapbox) after the re-run, and try `/validate` + an author editing year/country in a compilation.
 
 ## How to run things
