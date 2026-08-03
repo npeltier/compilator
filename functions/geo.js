@@ -17,6 +17,21 @@ import { lookupArtistGeo, lookupArtistByDiscogsId } from './musicbrainz.js';
 // v2: Discogs-id disambiguation (exact MB artist via the Discogs URL relation).
 export const GEO_VERSION = 2;
 
+// `geoV` records which pipeline version last TOUCHED a doc — it does not mean the
+// lookup succeeded. Done-ness is "at the current version AND we actually found
+// something", i.e. a `'none'` result is never done: an artist that failed to
+// resolve (no Discogs id, MusicBrainz down, a `nomatch` release with no bio to
+// fall back on) stays eligible for a retry on the next run instead of being
+// retired forever. Both "already resolved?" checks — the artistMeta cache below
+// and the song skip in scripts/backfill-geo.js — go through this.
+// Cache docs name the field `source`, song docs `geoSource`; a doc carrying
+// neither isn't ours, so treat it as unresolved (a wasted retry beats a
+// permanently stranded song).
+export function isGeoResolved(doc) {
+  if (!doc || doc.geoV !== GEO_VERSION) return false;
+  return (doc.source ?? doc.geoSource ?? 'none') !== 'none';
+}
+
 // A Firestore-doc-id-safe key for an artist. normalizeArtist only lowercases +
 // trims, so names like "AC/DC" keep a slash — which Firestore treats as a path
 // separator (invalid as a doc id). Collapse slashes so the cache key is stable
@@ -63,7 +78,7 @@ export async function resolveArtistGeo(db, artist, {
 
   const ref = db.collection('artistMeta').doc(key);
   const snap = await ref.get();
-  if (!force && snap.exists && snap.data().geoV === GEO_VERSION) return snap.data();
+  if (!force && snap.exists && isGeoResolved(snap.data())) return snap.data();
 
   let geo = null;
   try {

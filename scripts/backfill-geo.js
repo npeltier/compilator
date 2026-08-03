@@ -5,8 +5,11 @@
  * artist once (cached in artistMeta/{normalizedArtist}) and fans the result out
  * to all of that artist's songs — keeping us well under MusicBrainz's 1 req/s.
  *
- * Idempotent: songs already at the current geo pipeline version are skipped, so
- * it's safe to re-run. Pass --force to re-resolve every artist regardless.
+ * Idempotent: songs already resolved at the current geo pipeline version are
+ * skipped, so it's safe to re-run. Songs whose lookup came back empty
+ * (geoSource 'none') are NOT considered done and get retried on each run — a
+ * failed resolution shouldn't be permanent. Pass --force to re-resolve every
+ * artist, resolved or not.
  *
  * Runs against the REAL project (no emulator). Authenticate first with either:
  *   gcloud auth application-default login          # uses your ADC
@@ -32,7 +35,7 @@ for (const v of ['FIRESTORE_EMULATOR_HOST', 'FIREBASE_STORAGE_EMULATOR_HOST']) {
 admin.initializeApp({ projectId: PROJECT, storageBucket: BUCKET });
 
 // Import AFTER initializeApp so the shared modules reuse our configured app.
-const { resolveArtistGeo, geoSongFields, GEO_VERSION } = await import('../functions/geo.js');
+const { resolveArtistGeo, geoSongFields, isGeoResolved } = await import('../functions/geo.js');
 const { normalizeArtist } = await import('../functions/doublons.js');
 const { isVariousArtist } = await import('../functions/discogs.js');
 
@@ -54,7 +57,9 @@ async function run() {
     const name = normalizeArtist(raw);
     if (!name || isVariousArtist(raw)) continue;
     if (s.geoManual) continue; // never overwrite a manual correction
-    if (!FORCE && s.geoV === GEO_VERSION) continue;
+    // Note: NOT `geoV === GEO_VERSION` — a song whose lookup came back 'none' is
+    // retried on every run rather than retired at the current version.
+    if (!FORCE && isGeoResolved(s)) continue;
     const discogsArtistId = s.discogs?.artistId || null;
     const key = discogsArtistId ? `discogs-${discogsArtistId}` : name;
     let g = byArtist.get(key);
