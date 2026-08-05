@@ -190,6 +190,50 @@ describe('recomputeDoublonsForSeeds', () => {
     expect(db.writes.map((w) => w.path)).toEqual(['c1/survivor']);
   });
 
+  // The wrong-artist correction: 'target' was mistakenly filed under Nina
+  // Simone, so 'stale' carries a sameArtist chip pointing at it. Nothing about
+  // the corrected seed matches 'stale' any more, so it's only reachable through
+  // its own stored doublons.
+  test('a song pointing at a seed under its old artist is cleaned up', async () => {
+    const db = fakeDb([
+      songDoc('c1', 'target', {
+        hash: 'h1',
+        artist: 'Bon Artiste',
+        doublons: { sameTrack: [], sameArtist: [{ compilationId: 'c2', songId: 'stale' }] },
+      }),
+      songDoc('c2', 'stale', {
+        hash: 'h2',
+        artist: 'Nina Simone',
+        doublons: { sameTrack: [], sameArtist: [{ compilationId: 'c1', songId: 'target' }] },
+      }),
+      songDoc('c3', 'unrelated', { hash: 'h3', artist: 'Personne' }),
+    ]);
+
+    await recomputeDoublonsForSeeds(db, [
+      { compilationId: 'c1', songId: 'target', hashes: ['h1'], artist: 'Bon Artiste' },
+    ]);
+
+    expect(db.writes.map((w) => w.path).sort()).toEqual(['c1/target', 'c2/stale']);
+    expect(written(db, 'c1/target')).toEqual({ sameTrack: [], sameArtist: [] });
+    expect(written(db, 'c2/stale')).toEqual({ sameTrack: [], sameArtist: [] });
+  });
+
+  test('a stale sameTrack chip pointing at a seed is cleaned up too', async () => {
+    const db = fakeDb([
+      songDoc('c1', 'target', { hash: 'hNew', artist: 'A' }),
+      songDoc('c2', 'stale', {
+        hash: 'hOld',
+        artist: 'B',
+        doublons: { sameTrack: [{ compilationId: 'c1', songId: 'target' }], sameArtist: [] },
+      }),
+    ]);
+    // Note: no oldHash passed — the reverse sweep alone has to find 'stale'.
+    await recomputeDoublonsForSeeds(db, [
+      { compilationId: 'c1', songId: 'target', hashes: ['hNew'], artist: 'A' },
+    ]);
+    expect(written(db, 'c2/stale')).toEqual({ sameTrack: [], sameArtist: [] });
+  });
+
   test('null hashes are ignored rather than matching each other', async () => {
     const db = fakeDb([
       songDoc('c1', 'a', { hash: null, artist: 'X' }),

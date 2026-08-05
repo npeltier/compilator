@@ -378,6 +378,18 @@ export function updateUserLocal(email, patch) {
   usersByEmail.set(key, u);
 }
 
+// Mutate a song record after the lazy songs fetch — used by the edit and
+// /validate screens so the rest of the SPA (player detail, map, the validate
+// list itself) reflects a correction without a reload. Mutated in place because
+// views hold references to these objects. A `null` in the patch means "cleared",
+// so pass the patch actually written to Firestore, minus any sentinel value.
+export function updateSongLocal(songId, patch) {
+  const s = songsById.get(songId);
+  if (!s) return null;
+  Object.assign(s, patch);
+  return s;
+}
+
 // Insert or update a compilation in the in-memory catalog after a create/save,
 // so the home banner, the upload editor and /c/:id reflect it without a reload.
 export function upsertCompilationLocal(id, patch) {
