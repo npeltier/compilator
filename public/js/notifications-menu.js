@@ -82,27 +82,26 @@ export function initNotifications(user) {
   };
 
   function renderPanel() {
-    const feed = getFeed();
     const cut = currentCut();
+    const unseen = getFeed().filter((e) => e.ts > cut);  // read entries disappear once seen
     const foot = `<a class="notif-foot" href="/profile">Profil &amp; réglages</a>`;
-    if (!feed.length) {
+    if (!unseen.length) {
       panel.innerHTML = `<div class="notif-head">Notifications</div>`
         + `<div class="notif-empty">Rien de neuf pour l'instant.</div>${foot}`;
       return;
     }
-    const rows = feed.map((e) => renderRow(e, e.ts > cut)).join('');
+    const rows = unseen.map((e) => renderRow(e)).join('');
     panel.innerHTML = `<div class="notif-head">Notifications</div>`
       + `<ul class="notif-list">${rows}</ul>${foot}`;
     paintAvatars(panel);
   }
 
-  function renderRow(e, unread) {
-    const u = unread ? ' unread' : '';
+  function renderRow(e) {
     if (e.type === 'reaction') {
       const t = e.track;
       const compLink = t.compilationId
         ? ` · <a href="/c/${t.compilationId}">${esc(t.compilationTitle)}</a>` : '';
-      return `<li class="notif-row${u}">`
+      return `<li class="notif-row unread">`
         + `<a class="notif-who" href="/author/${esc(authorSlug(e.reactor))}">`
         + `${avatarHTML(e.reactor, { size: 'xs' })}<span>${esc(displayNameFor(e.reactor))}</span></a>`
         + `<span class="notif-emoji">${esc(e.emojis.join(' '))}</span>`
@@ -110,7 +109,7 @@ export function initNotifications(user) {
         + `</li>`;
     }
     const c = e.comp;
-    return `<li class="notif-row${u}">`
+    return `<li class="notif-row unread">`
       + `<div class="notif-txt">Nouvelle compilation `
       + `<a href="/c/${c.id}">${esc(c.title || 'Sans titre')}</a> de `
       + `<a href="/author/${esc(authorSlug(c.author))}">${esc(displayNameFor(c.author))}</a></div>`
