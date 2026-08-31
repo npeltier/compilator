@@ -32,6 +32,7 @@ import {
   displayNameFor,
   getCompilation,
   removeCompilationLocal,
+  updateSongLocal,
 } from '../catalog.js';
 import { isAdminSync } from '../auth-guard.js';
 import { loadCountryOptions, countryOptionsHTML, countryName } from '../countries.js';
@@ -650,13 +651,22 @@ export async function mount(el, { params }) {
       let deletedDurationTotal = 0;
       let deletedCount = 0;
 
+      // The field-level diffs we're about to commit, kept per song so the local
+      // re-render below applies exactly what was written (a cleared region has
+      // to read as cleared, not fall back to the pre-edit value).
+      const patches = new Map();
+      let artistChanged = false;
+
       surviving.forEach((r, i) => {
         const original = songs.find((t) => t.songId === r.songId);
         const songRef = doc(db, 'compilations', id, 'songs', r.songId);
         const update = {};
         if (original.order !== i) update.order = i;
         if ((r.title || '') !== (original.title || '')) update.title = r.title || null;
-        if ((r.artist || '') !== (original.artist || '')) update.artist = r.artist || null;
+        if ((r.artist || '') !== (original.artist || '')) {
+          update.artist = r.artist || null;
+          artistChanged = true;
+        }
 
         // Year + geo, editable by the author/admin. A change stamps `geoManual`
         // so the geo backfill/enrichment never overwrites the correction.
@@ -668,6 +678,9 @@ export async function mount(el, { params }) {
         }
         if ((r.artistRegion || '') !== (original.artistRegion || '')) {
           update.artistRegion = r.artistRegion || null;
+          // The paired code the lookup stored alongside the region — left
+          // behind, it contradicts the region just cleared or rewritten.
+          update.artistRegionCode = null;
         }
         if ('artistCountryCode' in update || 'artistCountry' in update || 'artistRegion' in update) {
           update.geoManual = true;
@@ -677,8 +690,8 @@ export async function mount(el, { params }) {
           update.geoAlternatives = null;
         }
         if (Object.keys(update).length > 0) {
-          update.updatedAt = serverTimestamp();
-          batch.update(songRef, update);
+          patches.set(r.songId, update);
+          batch.update(songRef, { ...update, updatedAt: serverTimestamp() });
         }
       });
 
@@ -711,6 +724,24 @@ export async function mount(el, { params }) {
         console.warn('recomputeDurations failed (non-fatal):', e);
       }
 
+      // A renamed artist invalidates the duplicate chips on both sides — this
+      // song's sameArtist list, and the lists of the songs that matched the name
+      // it used to carry. Converge them server-side, then pull the chips back in
+      // for the rows we're about to re-render. Non-fatal.
+      let fixedDoublons = null;
+      if (artistChanged) {
+        try {
+          await recomputeDoublons(id);
+          fixedDoublons = new Map();
+          await Promise.all(surviving.map(async (r) => {
+            const snap = await getDoc(doc(db, 'compilations', id, 'songs', r.songId));
+            if (snap.exists()) fixedDoublons.set(r.songId, snap.data().doublons || null);
+          }));
+        } catch (e) {
+          console.warn('recomputeDoublons failed (non-fatal):', e);
+        }
+      }
+
       // Apply changes locally so we can stay on the page without a reload.
       if (trimmedTitle && trimmedTitle !== comp.title) {
         comp.title = trimmedTitle;
@@ -721,12 +752,18 @@ export async function mount(el, { params }) {
       }
       songs = surviving.map((r, i) => {
         const original = songs.find((t) => t.songId === r.songId);
+        const patch = patches.get(r.songId);
+        // Mirror the write into the shared catalog too, so the player detail,
+        // the map and /validate stop showing the pre-edit values in this session.
+        if (patch) updateSongLocal(r.songId, patch);
         return {
           ...original,
+          ...patch,
           order: i,
           title: r.title || 'Sans titre',
           artist: r.artist || '',
           duration: fixedDurations?.[r.songId] ?? r.duration,
+          doublons: fixedDoublons?.has(r.songId) ? fixedDoublons.get(r.songId) : original.doublons,
         };
       });
 

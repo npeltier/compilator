@@ -18,8 +18,9 @@ import {
   updateDoc,
   serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
-import { ensureSongsLoaded, visibleSongs, getCompilation } from '../catalog.js';
+import { ensureSongsLoaded, visibleSongs, getCompilation, updateSongLocal } from '../catalog.js';
 import { loadCountryOptions, countryOptionsHTML, countryName } from '../countries.js';
+import { recomputeDoublons } from '../upload-pipeline.js';
 
 const PAGE = 40;
 
@@ -102,6 +103,7 @@ export async function mount(el, { query }) {
   function wireRow(row) {
     const btn = row.querySelector('.vld-save');
     const status = row.querySelector('.vld-status');
+    const song = all[Number(row.dataset.idx)];
     btn.addEventListener('click', async () => {
       const val = (f) => row.querySelector(`[data-f="${f}"]`).value.trim();
       const countrySel = row.querySelector('.vld-country');
@@ -115,20 +117,40 @@ export async function mount(el, { query }) {
         artistCountry: country,
         artistCountryCode: code,
         artistRegion: val('region') || null,
+        // The paired code the lookup stored alongside the region — left behind,
+        // it contradicts a region the admin just cleared or rewrote.
+        artistRegionCode: null,
         geoManual: true, // never auto-overwrite this correction
         // Retire the provisional marker: this is now a human answer, so the row
         // stops showing up here and stops being re-resolved by the backfill.
         geoSource: 'manual',
         geoAlternatives: null,
         metaManual: true,
-        updatedAt: serverTimestamp(),
       };
+      const artistChanged = (patch.artist || '') !== (song?.artist || '');
       btn.disabled = true;
       status.textContent = '…';
       try {
-        await updateDoc(doc(db, 'compilations', row.dataset.comp, 'songs', row.dataset.song), patch);
+        await updateDoc(
+          doc(db, 'compilations', row.dataset.comp, 'songs', row.dataset.song),
+          { ...patch, updatedAt: serverTimestamp() },
+        );
+        // Keep the in-memory catalog in step with what we just wrote, or a
+        // re-render (paging back to this row) resurrects the old values from the
+        // stale object — and a second save would write them back.
+        updateSongLocal(row.dataset.song, patch);
         status.textContent = '✓';
         row.classList.add('vld-done');
+        // A corrected artist invalidates the duplicate chips on both sides: the
+        // song's own sameArtist list and those of the songs that used to match
+        // the wrong name. The server pass converges the lot.
+        if (artistChanged) {
+          try {
+            await recomputeDoublons(row.dataset.comp);
+          } catch (e) {
+            console.warn('recomputeDoublons failed (non-fatal):', e);
+          }
+        }
       } catch (err) {
         status.textContent = `✗ ${err.code || err.message}`;
         btn.disabled = false;

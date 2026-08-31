@@ -46,6 +46,9 @@ async function loadAllSongs(db) {
       compilationId: parentComp.id,
       hash: d.data().hash,
       artist: d.data().artist,
+      // Needed to find the songs that currently *point at* a seed — see the
+      // reverse-reference sweep in recomputeDoublonsForSeeds.
+      doublons: d.data().doublons || null,
       ref: d.ref,
     });
   });
@@ -60,6 +63,11 @@ async function loadAllSongs(db) {
  * the songs that pointed at the old one need their `sameTrack` refreshed too,
  * and they are no longer reachable from the new hash alone.
  *
+ * Reachability from the seed's *current* values isn't enough on its own: when a
+ * wrong artist is corrected, the songs that were listed as its `sameArtist`
+ * doublons no longer match anything about the seed, so they'd keep a stale chip
+ * pointing at it forever. Hence the reverse sweep over stored `doublons` below.
+ *
  * Everything is derived from a single snapshot, so a caller adding several songs
  * at once must seed them together (or recompute the whole compilation) rather
  * than firing one call per song: concurrent calls each read a snapshot that may
@@ -72,9 +80,9 @@ export async function recomputeDoublonsForSeeds(db, seeds) {
 
   // Song keys needing recomputation: the seeds themselves + anything sharing a
   // hash or artist with one of them (their chips have to gain the new entry).
-  const affected = new Set();
+  const seedKeys = new Set(seeds.map((seed) => `${seed.compilationId}/${seed.songId}`));
+  const affected = new Set(seedKeys);
   for (const seed of seeds) {
-    affected.add(`${seed.compilationId}/${seed.songId}`);
     const hashes = new Set((seed.hashes || []).filter(Boolean));
     const seedArtist = normalizeArtist(seed.artist);
     for (const s of allSongs) {
@@ -82,6 +90,18 @@ export async function recomputeDoublonsForSeeds(db, seeds) {
           || (seedArtist && normalizeArtist(s.artist) === seedArtist)) {
         affected.add(`${s.compilationId}/${s.id}`);
       }
+    }
+  }
+
+  // Reverse sweep: whatever a seed used to be matched by still carries a chip
+  // pointing at it. Those songs are only reachable through their own stored
+  // doublons, so recompute them too and the obsolete entries drop out.
+  for (const s of allSongs) {
+    const key = `${s.compilationId}/${s.id}`;
+    if (affected.has(key)) continue;
+    const refs = [...(s.doublons?.sameTrack || []), ...(s.doublons?.sameArtist || [])];
+    if (refs.some((r) => seedKeys.has(`${r.compilationId}/${r.songId}`))) {
+      affected.add(key);
     }
   }
 
