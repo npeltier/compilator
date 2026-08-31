@@ -212,6 +212,26 @@ export function songsByCountry({ authors = null, decade = null } = {}) {
   return { byCountry, unknown, total };
 }
 
+// Countries where `email` is (jointly) the top author by song count — i.e.
+// would top the map's per-country "Auteurs" list (map.js:203). Ties at the
+// max count all count as "first". Returns [{ code, count }], biggest wins first.
+export function firstPlaceCountries(email) {
+  const target = (email || '').toLowerCase();
+  if (!target) return [];
+  const { byCountry } = songsByCountry();
+  const out = [];
+  for (const [code, data] of byCountry) {
+    let max = 0;
+    let mine = 0;
+    for (const [author, n] of data.byAuthor) {
+      if (n > max) max = n;
+      if (author.toLowerCase() === target) mine = n;
+    }
+    if (mine > 0 && mine === max) out.push({ code, count: mine });
+  }
+  return out.sort((a, b) => b.count - a.count);
+}
+
 // Distinct authors among visible compilations, sorted by display name — powers
 // the map's author filter.
 export function visibleAuthors() {

@@ -11,6 +11,7 @@ import { loadLikedCompilations } from './liked-compilations.js';
 import { loadSavedFilters } from './saved-filters.js';
 import { initPlayer } from './player.js';
 import { initSearch } from './search.js';
+import { initNotifications } from './notifications-menu.js';
 import { register, start } from './router.js';
 
 // Surface the build version on the brand's tooltip and log it. CI rewrites the
@@ -125,6 +126,10 @@ function renderWho() {
 renderWho();
 window.addEventListener('profile-updated', renderWho);
 
+// Notifications badge + dropdown + load-time toast. Loads its data in the
+// background (like the warm-ups below); never blocks first paint.
+initNotifications(user);
+
 // Keep --topbar-h in sync so the sticky filter bar parks just below the nav
 // (the nav wraps to a taller layout on phones).
 const topbar = document.querySelector('.topbar');
@@ -147,6 +152,7 @@ register('/profile', () => import('./views/profile.js'));
 register('/migrate', () => import('./views/migrate.js'));
 register('/users', () => import('./views/users.js'));
 register('/validate', () => import('./views/validate.js'));
+register('/notif-test', () => import('./views/notif-test.js'));
 register('/author/:name', () => import('./views/author.js'));
 
 start(document.getElementById('view'));

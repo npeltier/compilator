@@ -15,10 +15,12 @@ import {
   allSongs,
   displayNameFor,
   emailFromAuthorSlug,
+  firstPlaceCountries,
   getCompilation,
   getUser,
   trackFromSongId,
 } from '../catalog.js';
+import { loadCountryOptions, countryName } from '../countries.js';
 import {
   emojisFromDoc,
   getMyEmojis,
@@ -34,6 +36,13 @@ function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
+}
+
+// ISO-3166-1 alpha-2 → flag emoji (regional indicator symbols).
+function flagEmoji(code) {
+  return /^[A-Za-z]{2}$/.test(code || '')
+    ? code.toUpperCase().replace(/./g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
+    : '';
 }
 
 // A toggleable filter chip (optionally with an author avatar), mirroring the
@@ -78,6 +87,7 @@ export async function mount(el, { params }) {
           <p class="eyebrow">Profil</p>
           <h1>${escape(displayName)}</h1>
           <div class="profile-stats" id="profileStats"></div>
+          <div class="chip-row" id="firstCountries"></div>
         </div>
       </header>
 
@@ -135,6 +145,18 @@ export async function mount(el, { params }) {
   const totalTracks = songIdSet.size;
   el.querySelector('#profileStats').textContent =
     `${comps.length} compilation${comps.length > 1 ? 's' : ''} · ${totalTracks} morceau${totalTracks > 1 ? 'x' : ''}`;
+
+  renderFirstCountries().catch((err) => console.warn('firstCountries render failed', err));
+  async function renderFirstCountries() {
+    const wrap = el.querySelector('#firstCountries');
+    const firsts = firstPlaceCountries(emailKey);
+    if (!firsts.length) { wrap.remove(); return; }
+    const options = await loadCountryOptions();
+    wrap.innerHTML = firsts.map(({ code, count }) => {
+      const name = countryName(options, code) || code;
+      return `<span class="chip" title="1er · ${count} morceau${count > 1 ? 'x' : ''}">${flagEmoji(code)} ${escape(name)}</span>`;
+    }).join('');
+  }
 
   el.querySelector('#compCount').textContent = comps.length
     ? `${comps.length} ${comps.length > 1 ? 'titres' : 'titre'}`

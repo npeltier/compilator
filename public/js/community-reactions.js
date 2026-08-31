@@ -18,6 +18,11 @@ import { EMOJIS, emojisFromDoc } from './reactions.js';
 
 // songId → Map<emoji, Set<userEmailLower>>
 const agg = new Map();
+// Flat log of every reaction doc seen during the scan, retaining its `at`
+// timestamp (which the aggregate above discards). Powers the notifications feed
+// — see notifications.js — without a second whole-corpus read.
+// Each: { songId, user, emojis: string[], at: millis }.
+const events = [];
 let loadPromise = null;
 
 function bucket(songId) {
@@ -34,11 +39,16 @@ export function ensureCommunityReactionsLoaded() {
       const songId = d.id;
       const userEmail = d.ref.parent.parent?.id; // /users/{email}/reactions/{songId}
       if (!userEmail) return;
+      const data = d.data();
+      const emojis = emojisFromDoc(data);
       const m = bucket(songId);
-      for (const emoji of emojisFromDoc(d.data())) {
+      for (const emoji of emojis) {
         let users = m.get(emoji);
         if (!users) { users = new Set(); m.set(emoji, users); }
         users.add(userEmail);
+      }
+      if (emojis.length) {
+        events.push({ songId, user: userEmail, emojis, at: data.at?.toMillis?.() || 0 });
       }
     });
   })().catch((err) => {
@@ -64,6 +74,12 @@ export function getAggregate(songId) {
     .filter(([, users]) => users.size > 0)
     .map(([emoji, users]) => ({ emoji, users: [...users] }))
     .sort((a, b) => orderOf(a.emoji) - orderOf(b.emoji));
+}
+
+// Raw reaction events captured during the scan, each { songId, user, emojis, at }.
+// Read-only snapshot for the notifications feed; empty until the scan resolves.
+export function reactionEvents() {
+  return events;
 }
 
 // Fold a single local toggle into the aggregate so the current user's edits show
