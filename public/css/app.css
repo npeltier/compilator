@@ -661,6 +661,8 @@ h3 { font-size: 24px; letter-spacing: 0.04em; }
   z-index: 100;
   cursor: pointer;
   transition: transform 120ms ease, box-shadow 120ms ease;
+  max-width: 850px;
+  margin: auto;
 }
 .player-bar:hover { transform: translateY(-2px); box-shadow: 0 16px 42px rgba(0, 0, 0, 0.6); }
 .player-bar:hover .now .t { color: var(--accent); }
