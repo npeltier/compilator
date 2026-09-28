@@ -82,7 +82,10 @@ export async function mount(el, { params }) {
           <p class="eyebrow">Profil</p>
           <h1>${escape(displayName)}</h1>
           <div class="profile-stats" id="profileStats"></div>
-          <div class="chip-row" id="firstCountries"></div>
+          <div id="firstCountriesWrap">
+            <p style="color:var(--ink-faint);font-size:12px;margin:8px 0 6px;">1er en nombre de morceaux dans :</p>
+            <div class="chip-row" id="firstCountries"></div>
+          </div>
         </div>
       </header>
 
@@ -145,12 +148,12 @@ export async function mount(el, { params }) {
   async function renderFirstCountries() {
     const wrap = el.querySelector('#firstCountries');
     const firsts = firstPlaceCountries(emailKey);
-    if (!firsts.length) { wrap.remove(); return; }
+    if (!firsts.length) { el.querySelector('#firstCountriesWrap').remove(); return; }
     const options = await loadCountryOptions();
     const chips = await Promise.all(firsts.map(async ({ code, count }) => {
       const name = countryName(options, code) || code;
       const shape = await countryShapeHTML(code);
-      return `<span class="chip country-chip" title="1er · ${count} morceau${count > 1 ? 'x' : ''}">${shape}<span>${escape(name)}</span></span>`;
+      return `<a href="/map?country=${escape(code)}" class="chip country-chip" title="1er · ${count} morceau${count > 1 ? 'x' : ''} · voir sur la carte">${shape}<span>${escape(name)}</span></a>`;
     }));
     wrap.innerHTML = chips.join('');
   }

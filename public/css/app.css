@@ -1520,6 +1520,11 @@ body.pf-open { overflow: hidden; }
 }
 
 /* ---- world map (/map) ---- */
+/* Wider than the default .shell so the choropleth gets real estate on desktop. */
+.map-shell { max-width: 1440px; }
+@media (min-width: 1024px) {
+  .map-shell { max-width: 1800px; }
+}
 .map-sub { color: var(--ink-dim); font-size: 13px; margin: 4px 0 0; }
 .map-wrap { position: relative; margin-top: 12px; }
 .map-svg { width: 100%; height: auto; display: block; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); }
