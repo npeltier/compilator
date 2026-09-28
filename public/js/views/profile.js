@@ -31,6 +31,7 @@ import {
 } from '../liked-compilations.js';
 import {
   displayNameFor,
+  authorSlug,
   getCompilation,
   trackFromSongId,
   updateUserLocal,
@@ -367,20 +368,12 @@ export async function mount(el) {
           <div class="art ${c.coverPath ? '' : 'placeholder'}">${c.coverPath ? '' : firstChar}</div>
           <div class="title">${escape(c.title)}</div>
         </a>
-        <a class="cover-card-author" href="#" role="button" title="Filtrer par ${escape(displayNameFor(c.author))}">
+        <a class="cover-card-author" href="/author/${authorSlug(c.author)}" title="Voir le profil de ${escape(displayNameFor(c.author))}">
           ${avatarHTML(c.author, { size: 'xs' })}
           <span class="author">${escape(displayNameFor(c.author))}</span>
         </a>
         <button class="lk-unlike" title="Retirer le ❤️" aria-label="Retirer">❤️</button>
       `;
-      // Clicking a card's author filters the grid to that author (instead of
-      // navigating away to their profile).
-      card.querySelector('.cover-card-author').addEventListener('click', (e) => {
-        e.preventDefault();
-        selectedLikedAuthors.clear();
-        selectedLikedAuthors.add(c.author);
-        renderLikedComps();
-      });
       card.querySelector('.lk-unlike').addEventListener('click', () => toggleCompLike(c.id));
       grid.appendChild(card);
       if (c.coverPath) {

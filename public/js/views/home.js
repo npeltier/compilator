@@ -3,7 +3,7 @@
 
 import { auth } from '../firebase-init.js';
 import { nextCompilationSlot, slotLabel, deadlineLabel } from '../slot.js';
-import { visibleCompilations, displayNameFor } from '../catalog.js';
+import { visibleCompilations, displayNameFor, authorSlug } from '../catalog.js';
 import { getMyEmojis, myEmojiSongIds } from '../reactions.js';
 import { likedCompCount, likedCompilationIds } from '../liked-compilations.js';
 import {
@@ -586,17 +586,11 @@ export async function mount(el, { query }) {
               <div class="art ${c.coverPath ? '' : 'placeholder'}">${c.coverPath ? '' : firstChar}</div>
               <div class="title">${escape(c.title)}</div>
             </a>
-            <a class="cover-card-author" href="#" role="button" title="Filtrer par ${escape(displayNameFor(c.author))}">
+            <a class="cover-card-author" href="/author/${authorSlug(c.author)}" title="Voir le profil de ${escape(displayNameFor(c.author))}">
               ${avatarHTML(c.author, { size: 'xs' })}
               <span class="author">${escape(displayNameFor(c.author))}</span>
             </a>
           `;
-          // Clicking a card's author toggles them in the author filter (rather
-          // than navigating to their profile), so you can build up a selection.
-          card.querySelector('.cover-card-author').addEventListener('click', (e) => {
-            e.preventDefault();
-            cycle('authors', c.author);
-          });
           grid.appendChild(card);
           if (c.coverPath) {
             const art = card.querySelector('.art');

@@ -664,6 +664,8 @@ h3 { font-size: 24px; letter-spacing: 0.04em; }
   max-width: 850px;
   margin: auto;
 }
+.player-bar[hidden],
+.player-full[hidden] { display: none; }
 .player-bar:hover { transform: translateY(-2px); box-shadow: 0 16px 42px rgba(0, 0, 0, 0.6); }
 .player-bar:hover .now .t { color: var(--accent); }
 .player-bar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -698,6 +700,7 @@ body.has-player { padding-bottom: 108px; }
 .player-bar button.icon:hover { color: var(--accent); background: transparent; }
 /* Big, prominent play/pause — the bar's primary action. */
 .player-bar .pb-bigplay { font-size: 30px; padding: 4px 10px; line-height: 1; }
+.player-bar .pb-next { font-size: 22px; padding: 6px 8px; line-height: 1; }
 /* Interactive reactions on the floating bar (chips + "+" picker). The control
    stops its own click propagation, so tapping a reaction doesn't expand the bar. */
 .player-bar #pb-react .rx-strip { flex-wrap: nowrap; max-width: 220px; overflow: hidden; }
@@ -1497,6 +1500,19 @@ body.pf-open { overflow: hidden; }
   text-transform: uppercase;
   letter-spacing: 0.12em;
 }
+.country-chip { gap: 7px; }
+.country-shape {
+  width: 30px;
+  height: 20px;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+.country-shape path {
+  fill: var(--accent);
+  stroke: var(--accent-soft);
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+}
 @media (max-width: 720px) {
   .profile-hero { flex-direction: column; align-items: flex-start; gap: 16px; }
   .avatar-xl { width: 100px; height: 100px; font-size: 44px; line-height: 100px; }
@@ -1606,4 +1622,3 @@ body.pf-open { overflow: hidden; }
   .vld-row { grid-template-columns: 1fr 1fr; }
   .vld-src { grid-column: 1 / -1; }
 }
-

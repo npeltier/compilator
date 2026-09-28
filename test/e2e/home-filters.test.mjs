@@ -136,6 +136,11 @@ async function run() {
     // them to be attached rather than visible.
     await page.waitForSelector('#authorChips .chip', { state: 'attached', timeout: 20000 });
     await page.addScriptTag({ content: PAGE_HELPERS });
+    const alphaProfileHref = await page.getAttribute(
+      '#years .cover-card:has(.author:text-is("Alpha")) .cover-card-author',
+      'href',
+    );
+    assert.match(alphaProfileHref || '', /^\/author\//, `card author should link to a profile, got "${alphaProfileHref}"`);
     ok('logged in, author chips rendered');
 
     step('open the (collapsed) Filtres bar');

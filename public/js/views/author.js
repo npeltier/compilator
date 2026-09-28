@@ -14,6 +14,7 @@ import {
   visibleCompilations,
   allSongs,
   displayNameFor,
+  authorSlug,
   emailFromAuthorSlug,
   firstPlaceCountries,
   getCompilation,
@@ -31,18 +32,12 @@ import { playQueue } from '../player.js';
 import { queueAuthor } from '../shuffle.js';
 import { avatarHTML, avatarUrl, paintAvatars } from '../avatar.js';
 import { filterBarHTML, wireFilterBar } from '../filter-bar.js';
+import { countryShapeHTML } from '../country-shape.js';
 
 function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
-}
-
-// ISO-3166-1 alpha-2 → flag emoji (regional indicator symbols).
-function flagEmoji(code) {
-  return /^[A-Za-z]{2}$/.test(code || '')
-    ? code.toUpperCase().replace(/./g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
-    : '';
 }
 
 // A toggleable filter chip (optionally with an author avatar), mirroring the
@@ -152,10 +147,12 @@ export async function mount(el, { params }) {
     const firsts = firstPlaceCountries(emailKey);
     if (!firsts.length) { wrap.remove(); return; }
     const options = await loadCountryOptions();
-    wrap.innerHTML = firsts.map(({ code, count }) => {
+    const chips = await Promise.all(firsts.map(async ({ code, count }) => {
       const name = countryName(options, code) || code;
-      return `<span class="chip" title="1er · ${count} morceau${count > 1 ? 'x' : ''}">${flagEmoji(code)} ${escape(name)}</span>`;
-    }).join('');
+      const shape = await countryShapeHTML(code);
+      return `<span class="chip country-chip" title="1er · ${count} morceau${count > 1 ? 'x' : ''}">${shape}<span>${escape(name)}</span></span>`;
+    }));
+    wrap.innerHTML = chips.join('');
   }
 
   el.querySelector('#compCount').textContent = comps.length
@@ -358,17 +355,11 @@ export async function mount(el, { params }) {
           <div class="art ${c.coverPath ? '' : 'placeholder'}">${c.coverPath ? '' : firstChar}</div>
           <div class="title">${escape(c.title)}</div>
         </a>
-        <a class="cover-card-author" href="#" role="button" title="Filtrer par ${escape(displayNameFor(c.author))}">
+        <a class="cover-card-author" href="/author/${authorSlug(c.author)}" title="Voir le profil de ${escape(displayNameFor(c.author))}">
           ${avatarHTML(c.author, { size: 'xs' })}
           <span class="author">${escape(displayNameFor(c.author))}</span>
         </a>
       `;
-      card.querySelector('.cover-card-author').addEventListener('click', (e) => {
-        e.preventDefault();
-        selectedHisLikedAuthors.clear();
-        selectedHisLikedAuthors.add(c.author);
-        renderHisLikedComps();
-      });
       grid.appendChild(card);
       if (c.coverPath) {
         coverUrl(c.coverPath).then((url) => { if (url) card.querySelector('.art').style.backgroundImage = `url(${url})`; });

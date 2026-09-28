@@ -195,6 +195,8 @@ async function run() {
     await page.waitForSelector('#searchInput', { timeout: 20000 });
     await page.waitForSelector('#shuffleRow', { timeout: 20000 });
     await page.addScriptTag({ content: PAGE_HELPERS });
+    assert.equal(await page.$eval('.player-bar', (e) => e.hidden), true, 'player should be hidden before a track is selected');
+    assert.equal(await page.$eval('body', (e) => e.classList.contains('has-player')), false, 'body should not reserve player space initially');
     ok('logged in, app booted, search box wired');
 
     step('search by SONG name → click → that track plays');
@@ -213,17 +215,24 @@ async function run() {
     await waitPlaying();
     ok('resume works (⏸)');
 
-    step('next / prev step through the compilation queue (from the expanded view)');
-    // Transport (prev/next) now lives in the expanded view; clicking the
-    // floating bar (here via the title, not the play button) opens it.
+    step('next is available on the floating bar; prev / next also work expanded');
+    await page.click('#pb-next');
+    await waitTitle('PTEST Song Two');
+    assert.equal(await page.$eval('.player-full', (e) => e.hidden), true, 'floating next should not expand the player');
+    ok('floating next → "PTEST Song Two"');
+
+    // Clicking the floating bar (here via the title, not transport) opens it.
     await page.click('#pb-title');
     await page.waitForSelector('.player-full:not([hidden]) #pf-next', { timeout: 20000 });
-    await page.click('#pf-next');
-    await waitTitle('PTEST Song Two');
-    ok('next → "PTEST Song Two"');
     await page.click('#pf-prev');
     await waitTitle('PTEST Song One');
-    ok('prev → "PTEST Song One"');
+    ok('expanded prev → "PTEST Song One"');
+    await page.click('#pf-next');
+    await waitTitle('PTEST Song Two');
+    ok('expanded next → "PTEST Song Two"');
+    await page.click('#pf-prev');
+    await waitTitle('PTEST Song One');
+    ok('expanded prev → "PTEST Song One"');
 
     step('detail screen (2nd screen) is reachable at desktop width and shows artist + track detail');
     // This viewport is desktop-width: the second screen used to be phone-only.

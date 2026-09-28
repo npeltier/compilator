@@ -233,10 +233,9 @@ export function initPlayer() {
   bar = document.createElement('div');
   bar.className = 'player-bar';
   bar.hidden = true;
-  // Minimal bar: cover, title, author·compilation, read-only reactions, a big
-  // play/pause, and read-only reactions. Everything else (prev/next, seek,
-  // volume, cast, stop, reacting) lives in the expanded view. The whole floating
-  // bar is the opener — click it (anywhere but the play button) to expand.
+  // Minimal bar: cover, title, author·compilation, reactions, play/pause and
+  // next. Previous, seek, volume, cast and stop live in the expanded view. The
+  // whole floating bar is the opener — click it outside transport to expand.
   bar.innerHTML = `
     <div class="pb-left">
       <div class="pb-cover" id="pb-cover"></div>
@@ -248,6 +247,7 @@ export function initPlayer() {
     <div class="pb-right">
       <div class="rx-host" id="pb-react"></div>
       <button class="icon pb-bigplay" id="pb-play" title="Lecture / pause" aria-label="Lecture / pause">▶</button>
+      <button class="icon pb-next" id="pb-next" title="Suivant" aria-label="Suivant">⏭</button>
     </div>
   `;
   bar.setAttribute('role', 'button');
@@ -257,10 +257,11 @@ export function initPlayer() {
   document.body.appendChild(bar);
   buildFullscreen();
 
-  // Click anywhere on the bar to expand; the play button opts out.
+  // Click anywhere on the bar to expand; transport buttons opt out.
   bar.addEventListener('click', openFullscreen);
   bar.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); openFullscreen(); } });
   bar.querySelector('#pb-play').addEventListener('click', (e) => { e.stopPropagation(); togglePlayPause(); });
+  bar.querySelector('#pb-next').addEventListener('click', (e) => { e.stopPropagation(); playAt(cursor + 1); });
   audio.addEventListener('timeupdate', () => {
     const d = audio.duration || 0;
     const pos = d ? Math.round((audio.currentTime / d) * 1000) : 0;
